@@ -27,7 +27,7 @@ if not os.path.exists(UPLOAD_DIR):
 # =============================================================
 LINE_ACCESS_TOKEN = "RBMqGMQq55Qc+ia3TCT/eZbs6Hp/8eyFSRUCy5URtFhopGRzo83Y2m+7K4JZplUgOZi13r/f9JyHm9bLg4VRfuV84l6/zktHMm2hASsDevA0brJNfeTIqhHci5K3vKgIUJ9xnIM5yJftZPD6vReKegdB04t89/1O/w1cDnyilFU="
 LINE_GROUP_ID = "C66b5ef8b6a38a80fe1320cbcb346db1f"
-APP_URL = "http://192.168.5.106:8501"
+APP_URL = "https://related-alert-erh2rywrtchautlthjlrwb.streamlit.app/"
 
 
 # =============================================================
