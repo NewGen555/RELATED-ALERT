@@ -449,6 +449,10 @@ else:
     with col_main_right:
         model_name = st.text_input("MODEL :", value=get_val("MODEL"), disabled=is_disabled)
         master_dwg = st.text_input("MASTER DWG. NO. :", value=get_val("MASTER_DWG_NO"), disabled=is_disabled)
+        
+        # 📌 ปรับแก้ไขตรงนี้: แสดงช่อง ISSUE BY ตลอดเวลา (PDD กรอกได้ / แผนกอื่นดูได้อย่างเดียว)
+        saved_issue_by = get_val("ISSUE_BY", st.session_state.user_name if "PDD" in selected_dept else "")
+        issue_by = st.text_input("✍️ ISSUE BY (ผู้จัดทำเอกสาร) :", value=saved_issue_by, disabled=is_disabled)
 
     st.markdown("---")
     left_col, right_col = st.columns(2)
@@ -521,7 +525,24 @@ else:
         if not doc_no: st.error("❌ กรุณาระบุกรอกรหัส DOCUMENT NO. ก่อนบันทึก")
         else:
             if "PDD" in selected_dept:
-                final_data = {"DOCUMENT_NO": doc_no, "CUSTOMER_NAME": customer_name, "PART_NAME": part_name, "PART_NO": part_no, "MODEL": model_name, "MASTER_DWG_NO": master_dwg, "DATE": date.today().strftime('%Y-%m-%d'), "REF_DOC_TYPE": ref_doc_type, "REF_DOC_NO": ref_doc_no, "EFF_EVENT": eff_event, "EFF_PLAN": eff_plan.strftime('%Y-%m-%d'), "SUBJECT_TEXT": subject_text, "SUBJECT_IMAGE_PATH": image_path_to_save, "DOC_STATUS": "PENDING", **dept_inputs}
+                final_data = {
+                    "DOCUMENT_NO": doc_no, 
+                    "CUSTOMER_NAME": customer_name, 
+                    "PART_NAME": part_name, 
+                    "PART_NO": part_no, 
+                    "MODEL": model_name, 
+                    "MASTER_DWG_NO": master_dwg, 
+                    "ISSUE_BY": issue_by,  # 📌 เพิ่มการเซฟค่า ISSUE BY
+                    "DATE": date.today().strftime('%Y-%m-%d'), 
+                    "REF_DOC_TYPE": ref_doc_type, 
+                    "REF_DOC_NO": ref_doc_no, 
+                    "EFF_EVENT": eff_event, 
+                    "EFF_PLAN": eff_plan.strftime('%Y-%m-%d'), 
+                    "SUBJECT_TEXT": subject_text, 
+                    "SUBJECT_IMAGE_PATH": image_path_to_save, 
+                    "DOC_STATUS": "PENDING", 
+                    **dept_inputs
+                }
                 if 'uploaded_image' in locals() and uploaded_image is not None: image.save(image_path_to_save)
             else:
                 final_data = {"DOCUMENT_NO": doc_no, **dept_inputs}
