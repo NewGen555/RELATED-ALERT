@@ -172,7 +172,7 @@ st.markdown("""
 sec_passwords = st.secrets.get("passwords", {})
 
 USERS = {
-    "pdd_user": {"password": sec_passwords.get("pdd_user", "pdd1234"), "dept": "PDD (Product Design)", "name": "ENGINEER PDD"},
+    "Thanawat": {"password": sec_passwords.get("Thanawat", "62044"), "dept": "PDD (Product Design)", "name": "ENGINEER PDD"},
     "qc_user": {"password": sec_passwords.get("qc_user", "qc1234"), "dept": "QC (Quality Control)", "name": "ENGINEER QC"},
     "pcd_user": {"password": sec_passwords.get("pcd_user", "pcd1234"), "dept": "PCD (Production Control)", "name": "ENGINEER PCD"},
     "prd_user": {"password": sec_passwords.get("prd_user", "prd1234"), "dept": "PRO (Production / PD)", "name": "ENGINEER Production"},
