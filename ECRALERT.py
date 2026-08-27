@@ -7,6 +7,8 @@ import pandas as pd
 import streamlit as st
 from datetime import date
 from PIL import Image
+import gspread
+from google.oauth2 import service_account
 
 # =============================================================
 # ตั้งค่าหน้าเว็บ Streamlit
@@ -17,7 +19,6 @@ st.set_page_config(
     page_icon="🔐"
 )
 
-EXCEL_FILE = "change_control_db.xlsx"
 TEMPLATE_FILE = "template_form.xlsx"
 UPLOAD_DIR = "uploads"
 
@@ -25,13 +26,32 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # =============================================================
+# CONNECT GOOGLE SHEETS API
+# =============================================================
+@st.cache_resource
+def get_gspread_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=scopes
+    )
+    return gspread.authorize(credentials)
+
+def get_worksheet():
+    gc = get_gspread_client()
+    sheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
+    return gc.open(sheet_name).sheet1
+
+# =============================================================
 # CONFIGURATION: SMTP EMAIL SETTINGS & DEPARTMENT EMAILS
-# ดึงรหัสผ่านอีเมลจาก st.secrets (หากไม่มีให้ใช้ค่าสำรอง)
 # =============================================================
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SENDER_EMAIL = "pdd1development@gmail.com"
-SENDER_PASSWORD = st.secrets.get("email", {}).get("sender_password", "awynohxlypvxuxfo")
+SENDER_PASSWORD = st.secrets.get("email", {}).get("sender_password", "")
 APP_URL = "https://related-alert-erh2rywrtchautlthjlrwb.streamlit.app/"
 
 DEPT_EMAILS = {
@@ -51,9 +71,6 @@ DEPT_EMAILS = {
     ]
 }
 
-# =============================================================
-# FUNCTION: ส่งแจ้งเตือนผ่าน Email (SMTP)
-# =============================================================
 def send_email_notification(to_email, subject, body_content):
     recipient_list = to_email if isinstance(to_email, list) else [to_email]
     msg = MIMEMultipart()
@@ -127,7 +144,7 @@ def send_final_approved_email(doc_no, customer, part_name, gm_name):
     return send_email_notification(to_email, subject, body)
 
 # =============================================================
-# 🎨 CSS ธีมสีฟ้าอ่อน + ขาว
+# 🎨 CSS
 # =============================================================
 st.markdown("""
 <style>
@@ -150,7 +167,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 👤 ระบบผู้ใช้งาน (ดึง Password จาก st.secrets)
+# 👤 USERS
 # =============================================================
 sec_passwords = st.secrets.get("passwords", {})
 
@@ -198,7 +215,7 @@ def clear_all_inputs():
     st.rerun()
 
 # =============================================================
-# 🔐 หน้า LOGIN
+# 🔐 LOGIN UI
 # =============================================================
 if not st.session_state.logged_in:
     st.markdown("<style>[data-testid='stSidebar'] {display: none;}</style>", unsafe_allow_html=True)
@@ -233,8 +250,87 @@ with st.sidebar:
 selected_dept = st.session_state.current_dept
 
 # =============================================================
-# 🖨️ ฟังก์ชันเปิด Template Excel
+# DATABASE OPERATIONS (GOOGLE SHEETS)
 # =============================================================
+ITEM_DEPT_MAPPING = {
+    1: ("PDD", "MASTER DRAWING."), 2: ("PDD", "MATERIAL PART NO. LIST. , ACC DWG."),
+    3: ("PDD", "PROCESS FLOW CHART."), 4: ("PDD", "OPERATION MANUAL."),
+    5: ("PDD", "TEST RESULT."), 6: ("PDD", "FMEA"), 7: ("PDD", "TOOLING No"),
+    8: ("QC", "CONTROL PLAN."), 9: ("QC", "INCOMING SHEET."),
+    10: ("QC", "FINAL INSPECTION SHEET."), 11: ("QC", "W/I Out Going / TRAINING QC."),
+    12: ("QC", "INSPECTION STD. + DATA CHECK."), 13: ("QC", "MSA"),
+    14: ("QC", "PSW UP-DATE., PPAP APPROVAL."), 15: ("QC", "CHECKING FIXTURE."),
+    16: ("PCD", "MATERIAL REQUIREMENT."), 17: ("PCD", "PACKING STANDARD."),
+    18: ("PRO", "WORKING INSTRUCTION."), 19: ("PRO", "TRAINING PRODUCTION.")
+}
+
+def get_document_data(doc_no):
+    try:
+        ws = get_worksheet()
+        records = ws.get_all_records()
+        df = pd.DataFrame(records)
+        if not df.empty and 'DOCUMENT_NO' in df.columns:
+            matched = df[df['DOCUMENT_NO'].astype(str) == str(doc_no)]
+            if not matched.empty:
+                row_data = matched.iloc[0].to_dict()
+                return {k: ("" if pd.isna(v) else str(v)) for k, v in row_data.items()}
+    except Exception as e:
+        st.error(f"เกิดข้อผิดพลาดในการอ่านข้อมูลจาก Google Sheets: {e}")
+    return None
+
+def save_to_excel(data_dict):
+    """ฟังก์ชันบันทึกข้อมูลลง Google Sheets"""
+    try:
+        ws = get_worksheet()
+        headers = ws.row_values(1)
+        if not headers:
+            st.error("❌ Google Sheet ยังไม่มี Header ในบรรทัดแรก")
+            return False
+
+        records = ws.get_all_records()
+        df_old = pd.DataFrame(records)
+        doc_no = str(data_dict.get('DOCUMENT_NO', ''))
+
+        if not df_old.empty and 'DOCUMENT_NO' in df_old.columns and doc_no in df_old['DOCUMENT_NO'].astype(str).values:
+            row_index = df_old[df_old['DOCUMENT_NO'].astype(str) == doc_no].index[0] + 2
+            cell_updates = []
+            for key, value in data_dict.items():
+                if key in headers and value is not None and value != "":
+                    col_index = headers.index(key) + 1
+                    cell_updates.append(gspread.Cell(row=row_index, col=col_index, value=str(value)))
+            if cell_updates:
+                ws.update_cells(cell_updates)
+        else:
+            new_row = [str(data_dict.get(col, "")) for col in headers]
+            ws.append_row(new_row)
+        return True
+    except Exception as e:
+        st.error(f"❌ บันทึกข้อมูลลง Google Sheets ไม่สำเร็จ: {e}")
+        return False
+
+def check_all_departments_completed(doc_no):
+    doc_data = get_document_data(doc_no)
+    if not doc_data: return False
+    for num in range(1, 20):
+        rev_value = str(doc_data.get(f"DOC_{num}_REVISE", "NO")).upper()
+        if rev_value == "YES":
+            resp_value = str(doc_data.get(f"DOC_{num}_RESP", "")).strip()
+            if resp_value == "" or resp_value == "-": return False
+    return True 
+
+def get_missing_items(doc_no):
+    doc_data = get_document_data(doc_no)
+    if not doc_data: return []
+    missing_list = []
+    for num in range(1, 20):
+        rev_value = str(doc_data.get(f"DOC_{num}_REVISE", "NO")).upper()
+        if rev_value == "YES":
+            resp_value = str(doc_data.get(f"DOC_{num}_RESP", "")).strip()
+            if resp_value == "" or resp_value == "-":
+                dept, title = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
+                missing_list.append(f"ข้อ {num} [{dept}]: {title}")
+    return missing_list
+
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
         return None, f"❌ ไม่พบไฟล์แบบฟอร์มต้นฉบับ '{TEMPLATE_FILE}' ในโฟลเดอร์โปรเจกต์"
@@ -312,101 +408,6 @@ def export_to_printed_form(doc_no):
         return output_filename, None
     except Exception as e:
         return None, f"เกิดข้อผิดพลาดในการสร้างไฟล์ Excel: {str(e)}"
-
-# =============================================================
-# ส่วนประมวลผล Excel Database
-# =============================================================
-ITEM_DEPT_MAPPING = {
-    1: ("PDD", "MASTER DRAWING."),
-    2: ("PDD", "MATERIAL PART NO. LIST. , ACC DWG."),
-    3: ("PDD", "PROCESS FLOW CHART."),
-    4: ("PDD", "OPERATION MANUAL."),
-    5: ("PDD", "TEST RESULT."),
-    6: ("PDD", "FMEA"),
-    7: ("PDD", "TOOLING No"),
-    8: ("QC", "CONTROL PLAN."),
-    9: ("QC", "INCOMING SHEET."),
-    10: ("QC", "FINAL INSPECTION SHEET."),
-    11: ("QC", "W/I Out Going / TRAINING QC."),
-    12: ("QC", "INSPECTION STD. + DATA CHECK."),
-    13: ("QC", "MSA"),
-    14: ("QC", "PSW UP-DATE., PPAP APPROVAL."),
-    15: ("QC", "CHECKING FIXTURE."),
-    16: ("PCD", "MATERIAL REQUIREMENT."),
-    17: ("PCD", "PACKING STANDARD."),
-    18: ("PRO", "WORKING INSTRUCTION."),
-    19: ("PRO", "TRAINING PRODUCTION.")
-}
-
-def ตรวจเช็คและสร้างไฟล์():
-    if not os.path.exists(EXCEL_FILE):
-        columns = [
-            "DOCUMENT_NO", "CUSTOMER_NAME", "PART_NAME", "PART_NO", "MODEL", "MASTER_DWG_NO", "DATE", "ISSUE_BY",
-            "REF_DOC_TYPE", "REF_DOC_NO", "EFF_EVENT", "EFF_PLAN", "EFF_ACTUAL", "SUBJECT_TEXT", "SUBJECT_IMAGE_PATH",
-            "ATTACH_DRAWING", "ATTACH_ECI", "ATTACH_MEETING", "ATTACH_OTHERS", "ATTACH_OTHERS_DETAIL", "JUDGEMENT",
-            "DOC_STATUS",
-            "APPR_PDD_MGR", "DATE_PDD_MGR", "APPR_QCD_MGR", "DATE_QCD_MGR", "APPR_PCD_MGR", "DATE_PCD_MGR", "APPR_PRD_MGR", "DATE_PRD_MGR", "APPR_GM", "DATE_GM"
-        ]
-        for num in range(1, 20):
-            columns.extend([f"DOC_{num}_REVISE", f"DOC_{num}_RESP", f"DOC_{num}_PLAN", f"DOC_{num}_CLOSE"])
-        df = pd.DataFrame(columns=columns)
-        df.to_excel(EXCEL_FILE, index=False)
-
-ตรวจเช็คและสร้างไฟล์()
-
-def get_document_data(doc_no):
-    if os.path.exists(EXCEL_FILE):
-        try:
-            df = pd.read_excel(EXCEL_FILE)
-            if 'DOCUMENT_NO' in df.columns and doc_no in df['DOCUMENT_NO'].values:
-                row_data = df[df['DOCUMENT_NO'] == doc_no].iloc[0]
-                return {k: ("" if pd.isna(v) else v) for k, v in row_data.to_dict().items()}
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดในการอ่านไฟล์ฐานข้อมูล: {e}")
-    return None
-
-def save_to_excel(data_dict):
-    try:
-        if os.path.exists(EXCEL_FILE):
-            df_old = pd.read_excel(EXCEL_FILE)
-            df_new = pd.DataFrame([data_dict])
-            if 'DOCUMENT_NO' in df_old.columns and data_dict['DOCUMENT_NO'] in df_old['DOCUMENT_NO'].values:
-                old_row = df_old[df_old['DOCUMENT_NO'] == data_dict['DOCUMENT_NO']].iloc[0].to_dict()
-                for key, value in data_dict.items():
-                    if pd.notna(value) and value != "": old_row[key] = value
-                df_old = df_old[df_old['DOCUMENT_NO'] != data_dict['DOCUMENT_NO']]
-                df_new = pd.DataFrame([old_row])
-            df_combined = pd.concat([df_old, df_new], ignore_index=True)
-        else:
-            df_combined = pd.DataFrame([data_dict])
-        df_combined.to_excel(EXCEL_FILE, index=False)
-        return True
-    except PermissionError:
-        st.error(f"❌ บันทึกข้อมูลไม่ได้: กรุณาปิดไฟล์หลัก '{EXCEL_FILE}' บนคอมพิวเตอร์ของคุณก่อน")
-        return False
-
-def check_all_departments_completed(doc_no):
-    doc_data = get_document_data(doc_no)
-    if not doc_data: return False
-    for num in range(1, 20):
-        rev_value = str(doc_data.get(f"DOC_{num}_REVISE", "NO")).upper()
-        if rev_value == "YES":
-            resp_value = str(doc_data.get(f"DOC_{num}_RESP", "")).strip()
-            if resp_value == "" or resp_value == "-": return False
-    return True 
-
-def get_missing_items(doc_no):
-    doc_data = get_document_data(doc_no)
-    if not doc_data: return []
-    missing_list = []
-    for num in range(1, 20):
-        rev_value = str(doc_data.get(f"DOC_{num}_REVISE", "NO")).upper()
-        if rev_value == "YES":
-            resp_value = str(doc_data.get(f"DOC_{num}_RESP", "")).strip()
-            if resp_value == "" or resp_value == "-":
-                dept, title = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
-                missing_list.append(f"ข้อ {num} [{dept}]: {title}")
-    return missing_list
 
 # =============================================================
 # UI DISPLAY
@@ -593,7 +594,7 @@ else:
         judgement = st.radio("ผลการประเมินโดย PDD :", judge_options, index=judge_idx, disabled=is_disabled, key=f"judge_{reset_id}")
 
     st.markdown("---")
-    subject_text = st.text_area("SUBJECT (บันทึกเนื้อหารายละเอียดสาเหตุการแก้ไขแบบวิศวกรรม):", value=get_val("SUBJECT_TEXT"), disabled=is_disabled, key=f"subj_{reset_id}")
+    subject_text = st.text_area("SUBJECT (บันทึกเนื้อหารายรายละเอียดสาเหตุการแก้ไขแบบวิศวกรรม):", value=get_val("SUBJECT_TEXT"), disabled=is_disabled, key=f"subj_{reset_id}")
     image_path_to_save = get_val("SUBJECT_IMAGE_PATH")
     
     if "PDD" in selected_dept:
@@ -657,9 +658,6 @@ else:
             dept_inputs[f"DOC_{num}_RESP"] = resp
             dept_inputs[f"DOC_{num}_PLAN"] = p_date.strftime('%Y-%m-%d')
 
-    # =============================================================
-    # 🔘 ส่วนของปุ่มควบคุม (บันทึกข้อมูล / Clear หน้าจอ เฉพาะ PDD)
-    # =============================================================
     if "PDD" in selected_dept:
         col_btn_save, col_btn_clear = st.columns([3, 1])
         with col_btn_save:
@@ -673,9 +671,6 @@ else:
     if btn_clear:
         clear_all_inputs()
 
-    # =============================================================
-    # 🔘 ส่วนบันทึกข้อมูล พร้อมระบบ Validation เช็กการกรอกข้อมูลของแผนก
-    # =============================================================
     if btn_save:
         if not doc_no:
             st.error("❌ กรุณากรอก DOCUMENT NO. ก่อนบันทึกข้อมูล")
@@ -689,7 +684,7 @@ else:
                     unfilled_items.append(f"ข้อ {num}: {doc_name}")
 
             if unfilled_items:
-                st.error(f"❌ แผนก {current_dept_key} ยังกรอกข้อมูลไม่ครบถ้วน! รายการที่เลือก REVISE เป็น 'YES' กรุณาระบุชื่อผู้รับผิดชอบ (RESPONSIBILITY PERSON)")
+                st.error(f"❌ แผนก {current_dept_key} ยังกรอกข้อมูลไม่ครบถ้วน! รายการที่เลือก REVISE เป็น 'YES' กรุณาระบุชื่อผู้รับผิดชอบ")
                 with st.expander("🔍 **คลิกเพื่อดูรายการข้อที่ต้องระบุผู้รับผิดชอบ**", expanded=True):
                     for item in unfilled_items:
                         st.write(f"⚠️ {item}")
@@ -711,7 +706,7 @@ else:
                 save_payload.update(dept_inputs)
 
                 if save_to_excel(save_payload):
-                    st.success(f"✅ บันทึกข้อมูลของแผนก {current_dept_key} เรียบร้อยแล้ว!")
+                    st.success(f"✅ บันทึกข้อมูลของแผนก {current_dept_key} ลง Google Sheets เรียบร้อยแล้ว!")
                     
                     if check_all_departments_completed(doc_no):
                         save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "FINISH"})
