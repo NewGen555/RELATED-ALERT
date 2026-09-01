@@ -204,9 +204,6 @@ if "logged_in" not in st.session_state:
     st.session_state.current_dept = None
     st.session_state.user_name = None
 
-if "form_reset_counter" not in st.session_state:
-    st.session_state.form_reset_counter = 0
-
 def login(username, password):
     user = USERS.get(username)
     if user and user["password"] != "" and user["password"] == password:
@@ -222,10 +219,6 @@ def logout():
     st.session_state.current_user = None
     st.session_state.current_dept = None
     st.session_state.user_name = None
-    st.rerun()
-
-def clear_all_inputs():
-    st.session_state.form_reset_counter += 1
     st.rerun()
 
 # =============================================================
@@ -283,11 +276,22 @@ def get_document_data(doc_no):
         ws = get_worksheet()
         records = ws.get_all_records()
         df = pd.DataFrame(records)
-        if not df.empty and 'DOCUMENT_NO' in df.columns:
-            matched = df[df['DOCUMENT_NO'].astype(str) == str(doc_no)]
-            if not matched.empty:
-                row_data = matched.iloc[0].to_dict()
-                return {k: ("" if pd.isna(v) else str(v)) for k, v in row_data.items()}
+        
+        if not df.empty:
+            df.columns = [str(c).strip().upper() for c in df.columns]
+            target_col = None
+            for col in ['DOCUMENT_NO', 'DOCUMENT NO', 'DOC_NO']:
+                if col in df.columns:
+                    target_col = col
+                    break
+            
+            if target_col:
+                df[target_col] = df[target_col].astype(str).str.strip().str.upper()
+                search_key = str(doc_no).strip().upper()
+                matched = df[df[target_col] == search_key]
+                if not matched.empty:
+                    row_data = matched.iloc[0].to_dict()
+                    return {str(k): ("" if pd.isna(v) else str(v).strip()) for k, v in row_data.items()}
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาดในการอ่านข้อมูลจาก Google Sheets: {e}")
     return None
@@ -295,26 +299,30 @@ def get_document_data(doc_no):
 def save_to_excel(data_dict):
     try:
         ws = get_worksheet()
-        headers = ws.row_values(1)
+        headers = [str(h).strip().upper() for h in ws.row_values(1)]
         if not headers:
             st.error("❌ Google Sheet ยังไม่มี Header ในบรรทัดแรก")
             return False
 
         records = ws.get_all_records()
         df_old = pd.DataFrame(records)
-        doc_no = str(data_dict.get('DOCUMENT_NO', ''))
+        doc_no = str(data_dict.get('DOCUMENT_NO', '')).strip().upper()
 
-        if not df_old.empty and 'DOCUMENT_NO' in df_old.columns and doc_no in df_old['DOCUMENT_NO'].astype(str).values:
-            row_index = df_old[df_old['DOCUMENT_NO'].astype(str) == doc_no].index[0] + 2
+        target_col = 'DOCUMENT_NO' if 'DOCUMENT_NO' in headers else headers[0]
+
+        if not df_old.empty and target_col in df_old.columns and doc_no in df_old[target_col].astype(str).str.strip().str.upper().values:
+            df_old[target_col] = df_old[target_col].astype(str).str.strip().str.upper()
+            row_index = df_old[df_old[target_col] == doc_no].index[0] + 2
             cell_updates = []
             for key, value in data_dict.items():
-                if key in headers and value is not None and value != "":
-                    col_index = headers.index(key) + 1
+                clean_key = str(key).strip().upper()
+                if clean_key in headers and value is not None and value != "":
+                    col_index = headers.index(clean_key) + 1
                     cell_updates.append(gspread.Cell(row=row_index, col=col_index, value=str(value)))
             if cell_updates:
                 ws.update_cells(cell_updates)
         else:
-            new_row = [str(data_dict.get(col, "")) for col in headers]
+            new_row = [str(data_dict.get(col, data_dict.get(col.upper(), ""))) for col in headers]
             ws.append_row(new_row)
         return True
     except Exception as e:
@@ -427,11 +435,9 @@ def export_to_printed_form(doc_no):
 # =============================================================
 st.title("KFT - RELATED DOCUMENT CHANGE CONTROL SYSTEM")
 
-reset_id = st.session_state.form_reset_counter
-
 if "Print Form" in selected_dept:
     st.subheader("🖨️ ระบบดึงและพิมพ์ฟอร์มเอกสารควบคุมอัตโนมัติ (Excel Format บริษัท)")
-    print_doc_no = st.text_input("กรอก DOCUMENT NO. ที่ต้องการแปลงข้อมูลออกฟอร์ม (เช่น R001/26) :", key=f"print_doc_{reset_id}").strip().upper()
+    print_doc_no = st.text_input("กรอก DOCUMENT NO. ที่ต้องการแปลงข้อมูลออกฟอร์ม (เช่น R001/26) :", key="print_doc_input").strip().upper()
     
     if print_doc_no:
         doc_data = get_document_data(print_doc_no)
@@ -458,7 +464,7 @@ if "Print Form" in selected_dept:
 
 elif "MGR" in selected_dept or "GM" in selected_dept:
     st.subheader("🔒 ระบบพิจารณาลงนามดิจิทัลและอนุมัติเอกสารควบคุม (Manager Sign-Off)")
-    approve_doc_no = st.text_input("ระบุ DOCUMENT NO. ที่ต้องการพิจารณาอนุมัติ :", key=f"appr_doc_{reset_id}").strip().upper()
+    approve_doc_no = st.text_input("ระบุ DOCUMENT NO. ที่ต้องการพิจารณาอนุมัติ :", key="appr_doc_input").strip().upper()
     
     if approve_doc_no:
         doc_data = get_document_data(approve_doc_no)
@@ -479,7 +485,7 @@ elif "MGR" in selected_dept or "GM" in selected_dept:
             
             st.markdown("---")
             current_today = date.today().strftime('%Y-%m-%d')
-            mgr_name = st.text_input("พิมพ์ชื่อ-นามสกุล ของคุณเพื่อใช้ยืนยันการอนุมัติ :", key=f"mgr_name_{reset_id}").strip()
+            mgr_name = st.text_input("พิมพ์ชื่อ-นามสกุล ของคุณเพื่อใช้ยืนยันการอนุมัติ :", key="mgr_name_input").strip()
             
             if doc_status != "FINISH" and doc_status != "APPROVED":
                 st.warning("⚠️ เอกสารนี้ยังไม่อยู่ในสถานะ 'FINISH' เนื่องจากพนักงานยังกรอกข้อมูลไม่ครบถ้วน")
@@ -547,72 +553,117 @@ elif "MGR" in selected_dept or "GM" in selected_dept:
 
 else:
     st.subheader("📝 ส่วนที่ 1: รายละเอียดข้อมูลโครงสร้างวิศวกรรมทั่วไป (Header)")
-    doc_no = st.text_input("📝 DOCUMENT NO. *จำเป็นต้องระบุ :", key=f"doc_no_{reset_id}").strip().upper()
     
-    existing_data = None
+    # 1. รับค่า DOCUMENT NO.
+    doc_no = st.text_input("📝 DOCUMENT NO. *จำเป็นต้องระบุ :", key="search_doc_no").strip().upper()
+    
+    # 2. ค้นหาและโหลดข้อมูลใส่ Session State เมื่อมีการป้อนเลขเอกสาร
     if doc_no:
         existing_data = get_document_data(doc_no)
-        if existing_data and "PDD" not in selected_dept:
-            st.info(f"✨ ค้นพบใบงานเลขที่ {doc_no} ในระบบ")
+        if existing_data:
+            if "PDD" not in selected_dept:
+                st.info(f"✨ ค้นพบใบงานเลขที่ {doc_no} ในระบบ")
+            
+            st.session_state["loaded_cust"] = existing_data.get("CUSTOMER_NAME", "-- เลือกชื่อลูกค้า --")
+            st.session_state["loaded_pname"] = existing_data.get("PART_NAME", "")
+            st.session_state["loaded_pno"] = existing_data.get("PART_NO", "")
+            st.session_state["loaded_model"] = existing_data.get("MODEL", "")
+            st.session_state["loaded_mdwg"] = existing_data.get("MASTER_DWG_NO", "")
+            st.session_state["loaded_issue"] = existing_data.get("ISSUE_BY", st.session_state.user_name)
+            st.session_state["loaded_reftype"] = existing_data.get("REF_DOC_TYPE", "CUSTOMER ECI No.")
+            st.session_state["loaded_refno"] = existing_data.get("REF_DOC_NO", "")
+            st.session_state["loaded_event"] = existing_data.get("EFF_EVENT", "")
+            st.session_state["loaded_plan"] = existing_data.get("EFF_PLAN", "")
+            st.session_state["loaded_att_dwg"] = (existing_data.get("ATTACH_DRAWING") == "YES")
+            st.session_state["loaded_att_eci"] = (existing_data.get("ATTACH_ECI") == "YES")
+            st.session_state["loaded_att_meet"] = (existing_data.get("ATTACH_MEETING") == "YES")
+            st.session_state["loaded_att_oth"] = (existing_data.get("ATTACH_OTHERS") == "YES")
+            st.session_state["loaded_att_oth_det"] = existing_data.get("ATTACH_OTHERS_DETAIL", "")
+            st.session_state["loaded_judge"] = existing_data.get("JUDGEMENT", "FEASIBLE")
+            st.session_state["loaded_subject"] = existing_data.get("SUBJECT_TEXT", "")
+            
+            for num in range(1, 20):
+                st.session_state[f"loaded_doc_{num}_rev"] = existing_data.get(f"DOC_{num}_REVISE", "NO")
+                st.session_state[f"loaded_doc_{num}_resp"] = existing_data.get(f"DOC_{num}_RESP", "")
+                st.session_state[f"loaded_doc_{num}_plan"] = existing_data.get(f"DOC_{num}_PLAN", "")
+        else:
+            st.session_state["loaded_cust"] = "-- เลือกชื่อลูกค้า --"
+            st.session_state["loaded_pname"] = ""
+            st.session_state["loaded_pno"] = ""
+            st.session_state["loaded_model"] = ""
+            st.session_state["loaded_mdwg"] = ""
+            st.session_state["loaded_issue"] = st.session_state.user_name if "PDD" in selected_dept else ""
+            st.session_state["loaded_reftype"] = "CUSTOMER ECI No."
+            st.session_state["loaded_refno"] = ""
+            st.session_state["loaded_event"] = ""
+            st.session_state["loaded_plan"] = ""
+            st.session_state["loaded_att_dwg"] = False
+            st.session_state["loaded_att_eci"] = False
+            st.session_state["loaded_att_meet"] = False
+            st.session_state["loaded_att_oth"] = False
+            st.session_state["loaded_att_oth_det"] = ""
+            st.session_state["loaded_judge"] = "FEASIBLE"
+            st.session_state["loaded_subject"] = ""
+            
+            for num in range(1, 20):
+                st.session_state[f"loaded_doc_{num}_rev"] = "NO"
+                st.session_state[f"loaded_doc_{num}_resp"] = ""
+                st.session_state[f"loaded_doc_{num}_plan"] = ""
 
     is_disabled = False if "PDD" in selected_dept else True
 
-    def get_val(key, default=""):
-        return existing_data.get(key, default) if existing_data else default
-
     col_main_left, col_main_right = st.columns(2)
     with col_main_left:
-        customer_list = ["-- เลือกชื่อลูกค้า --", "HONDA", "NISSAN", "TMA", "ADEINT", "OTHER"]
-        saved_cust = get_val("CUSTOMER_NAME", "-- เลือกชื่อลูกค้า --")
+        customer_list = ["-- เลือกชื่อลูกค้า --", "HONDA", "NISSAN", "TMA", "ADIENT", "OTHER"]
+        saved_cust = st.session_state.get("loaded_cust", "-- เลือกชื่อลูกค้า --")
         default_cust_index = customer_list.index(saved_cust) if saved_cust in customer_list else 0
-        customer_name = st.selectbox("👤 CUSTOMER NAME :", customer_list, index=default_cust_index, disabled=is_disabled, key=f"cust_{reset_id}")
-        part_name = st.text_input("PART NAME :", value=get_val("PART_NAME"), disabled=is_disabled, key=f"pname_{reset_id}")
-        part_no = st.text_input("PART NO. :", value=get_val("PART_NO"), disabled=is_disabled, key=f"pno_{reset_id}")
+        customer_name = st.selectbox("👤 CUSTOMER NAME :", customer_list, index=default_cust_index, disabled=is_disabled)
+        part_name = st.text_input("PART NAME :", value=st.session_state.get("loaded_pname", ""), disabled=is_disabled)
+        part_no = st.text_input("PART NO. :", value=st.session_state.get("loaded_pno", ""), disabled=is_disabled)
     with col_main_right:
-        model_name = st.text_input("MODEL :", value=get_val("MODEL"), disabled=is_disabled, key=f"model_{reset_id}")
-        master_dwg = st.text_input("MASTER DWG. NO. :", value=get_val("MASTER_DWG_NO"), disabled=is_disabled, key=f"mdwg_{reset_id}")
-        saved_issue_by = get_val("ISSUE_BY", st.session_state.user_name if "PDD" in selected_dept else "")
-        issue_by = st.text_input("✍️ ISSUE BY (ผู้จัดทำเอกสาร) :", value=saved_issue_by, disabled=is_disabled, key=f"issue_{reset_id}")
+        model_name = st.text_input("MODEL :", value=st.session_state.get("loaded_model", ""), disabled=is_disabled)
+        master_dwg = st.text_input("MASTER DWG. NO. :", value=st.session_state.get("loaded_mdwg", ""), disabled=is_disabled)
+        issue_by = st.text_input("✍️ ISSUE BY (ผู้จัดทำเอกสาร) :", value=st.session_state.get("loaded_issue", ""), disabled=is_disabled)
 
     st.markdown("---")
     left_col, right_col = st.columns(2)
     with left_col:
-        saved_ref_type = get_val("REF_DOC_TYPE", "CUSTOMER ECI No.")
+        saved_ref_type = st.session_state.get("loaded_reftype", "CUSTOMER ECI No.")
         ref_types = ["CUSTOMER ECI No.", "DESIGN NOTE. No.", "PROCESS CHANGE No."]
         default_ref_index = ref_types.index(saved_ref_type) if saved_ref_type in ref_types else 0
-        ref_doc_type = st.radio("เลือกประเภทเอกสารแจ้งแก้แบบ :", ref_types, index=default_ref_index, horizontal=True, disabled=is_disabled, key=f"reftype_{reset_id}")
-        ref_doc_no = st.text_input(f"กรอกเลขที่เอกสาร ({ref_doc_type}) :", value=get_val("REF_DOC_NO"), disabled=is_disabled, key=f"refno_{reset_id}").strip().upper()
+        ref_doc_type = st.radio("เลือกประเภทเอกสารแจ้งแก้แบบ :", ref_types, index=default_ref_index, horizontal=True, disabled=is_disabled)
+        ref_doc_no = st.text_input(f"กรอกเลขที่เอกสาร ({ref_doc_type}) :", value=st.session_state.get("loaded_refno", ""), disabled=is_disabled).strip().upper()
     with right_col:
-        eff_event = st.text_input("EVENT (เงื่อนไขการเริ่มมีผล) :", value=get_val("EFF_EVENT"), disabled=is_disabled, key=f"event_{reset_id}")
-        saved_plan_date = get_val("EFF_PLAN")
+        eff_event = st.text_input("EVENT (เงื่อนไขการเริ่มมีผล) :", value=st.session_state.get("loaded_event", ""), disabled=is_disabled)
+        saved_plan_date = st.session_state.get("loaded_plan", "")
         try: default_plan = date.fromisoformat(saved_plan_date) if saved_plan_date else date.today()
         except ValueError: default_plan = date.today()
-        eff_plan = st.date_input("PLAN (วันที่เริ่มแผนงาน) :", value=default_plan, disabled=is_disabled, key=f"effplan_{reset_id}")
+        eff_plan = st.date_input("PLAN (วันที่เริ่มแผนงาน) :", value=default_plan, disabled=is_disabled)
 
     st.markdown("---")
     col_attach, col_judge = st.columns(2)
     with col_attach:
         st.markdown("##### 📎 **ATTACH CUSTOMER'S**")
-        att_dwg = st.checkbox("DRAWING", value=(get_val("ATTACH_DRAWING") == "YES"), disabled=is_disabled, key=f"adwg_{reset_id}")
-        att_eci = st.checkbox("ECI or Design Note.", value=(get_val("ATTACH_ECI") == "YES"), disabled=is_disabled, key=f"aeci_{reset_id}")
-        att_meeting = st.checkbox("MEETING MINUTE", value=(get_val("ATTACH_MEETING") == "YES"), disabled=is_disabled, key=f"ameet_{reset_id}")
-        att_others = st.checkbox("OTHERS", value=(get_val("ATTACH_OTHERS") == "YES"), disabled=is_disabled, key=f"aoth_{reset_id}")
-        att_others_detail = st.text_input("ระบุ OTHERS (ถ้ามี) :", value=get_val("ATTACH_OTHERS_DETAIL"), disabled=is_disabled or not att_others, key=f"aothdet_{reset_id}")
+        att_dwg = st.checkbox("DRAWING", value=st.session_state.get("loaded_att_dwg", False), disabled=is_disabled)
+        att_eci = st.checkbox("ECI or Design Note.", value=st.session_state.get("loaded_att_eci", False), disabled=is_disabled)
+        att_meeting = st.checkbox("MEETING MINUTE", value=st.session_state.get("loaded_att_meet", False), disabled=is_disabled)
+        att_others = st.checkbox("OTHERS", value=st.session_state.get("loaded_att_oth", False), disabled=is_disabled)
+        att_others_detail = st.text_input("ระบุ OTHERS (ถ้ามี) :", value=st.session_state.get("loaded_att_oth_det", ""), disabled=is_disabled or not att_others)
 
     with col_judge:
         st.markdown("##### ⚖️ **JUDGEMENT (by PDD)**")
-        saved_judge = get_val("JUDGEMENT", "FEASIBLE")
+        saved_judge = st.session_state.get("loaded_judge", "FEASIBLE")
         judge_options = ["FEASIBLE", "IMPROBABILITY"]
         judge_idx = judge_options.index(saved_judge) if saved_judge in judge_options else 0
-        judgement = st.radio("ผลการประเมินโดย PDD :", judge_options, index=judge_idx, disabled=is_disabled, key=f"judge_{reset_id}")
+        judgement = st.radio("ผลการประเมินโดย PDD :", judge_options, index=judge_idx, disabled=is_disabled)
 
     st.markdown("---")
-    subject_text = st.text_area("SUBJECT (บันทึกเนื้อหารายรายละเอียดสาเหตุการแก้ไขแบบวิศวกรรม):", value=get_val("SUBJECT_TEXT"), disabled=is_disabled, key=f"subj_{reset_id}")
+    subject_text = st.text_area("SUBJECT (บันทึกเนื้อหารายรายละเอียดสาเหตุการแก้ไขแบบวิศวกรรม):", value=st.session_state.get("loaded_subject", ""), disabled=is_disabled)
 
     # =============================================================
     # 📷 ส่วนการอัปโหลดและแสดงผลรูปภาพ
     # =============================================================
-    uploaded_file = st.file_uploader("📷 อัปโหลดรูปภาพพิมพ์เขียวประกอบหัวข้อ SUBJECT (ถ้ามี):", type=["jpg", "png", "jpeg"], key=f"img_up_{reset_id}")
+    uploaded_file = st.file_uploader("📷 อัปโหลดรูปภาพพิมพ์เขียวประกอบหัวข้อ SUBJECT (ถ้ามี):", type=["jpg", "png", "jpeg"])
     
     if uploaded_file is not None:
         safe_doc_name = doc_no.replace("/", "_").replace("\\", "_") if doc_no else "temp"
@@ -635,20 +686,20 @@ else:
         
         is_item_disabled = False if (dept in selected_dept or ("PRD" in selected_dept and dept == "PRO")) else True
         
-        rev_saved = get_val(f"DOC_{num}_REVISE", "NO")
-        resp_saved = get_val(f"DOC_{num}_RESP", "")
-        plan_saved = get_val(f"DOC_{num}_PLAN", "")
+        rev_saved = st.session_state.get(f"loaded_doc_{num}_rev", "NO")
+        resp_saved = st.session_state.get(f"loaded_doc_{num}_resp", "")
+        plan_saved = st.session_state.get(f"loaded_doc_{num}_plan", "")
 
         with c1:
-            rev_val = st.radio(f"แก้ไข? ({num})", ["NO", "YES"], index=1 if rev_saved == "YES" else 0, horizontal=True, disabled=is_item_disabled, key=f"rev_{num}_{reset_id}")
+            rev_val = st.radio(f"แก้ไข? ({num})", ["NO", "YES"], index=1 if rev_saved == "YES" else 0, horizontal=True, disabled=is_item_disabled, key=f"ui_rev_{num}")
             form_data[f"DOC_{num}_REVISE"] = rev_val
 
         with c2:
-            resp_val = st.text_input(f"ผู้รับผิดชอบ ({num})", value=resp_saved, disabled=is_item_disabled, key=f"resp_{num}_{reset_id}")
+            resp_val = st.text_input(f"ผู้รับผิดชอบ ({num})", value=resp_saved, disabled=is_item_disabled, key=f"ui_resp_{num}")
             form_data[f"DOC_{num}_RESP"] = resp_val
 
         with c3:
-            plan_val = st.text_input(f"กำหนดเสร็จ PLAN ({num})", value=plan_saved, disabled=is_item_disabled, key=f"plan_{num}_{reset_id}")
+            plan_val = st.text_input(f"กำหนดเสร็จ PLAN ({num})", value=plan_saved, disabled=is_item_disabled, key=f"ui_plan_{num}")
             form_data[f"DOC_{num}_PLAN"] = plan_val
         st.markdown("<hr style='margin:5px 0;'>", unsafe_allow_html=True)
 
