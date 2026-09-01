@@ -26,7 +26,7 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # =============================================================
-# CONNECT GOOGLE SHEETS API (รองรับทั้ง service_account.json และ st.secrets)
+# CONNECT GOOGLE SHEETS API
 # =============================================================
 @st.cache_resource
 def get_gspread_client():
@@ -35,7 +35,6 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/drive"
     ]
     
-    # 1. ลองอ่านจากไฟล์ service_account.json ก่อน (เสถียรที่สุด)
     json_path = os.path.join(os.path.dirname(__file__), "service_account.json")
     if os.path.exists(json_path):
         credentials = service_account.Credentials.from_service_account_file(
@@ -43,7 +42,6 @@ def get_gspread_client():
             scopes=scopes
         )
     else:
-        # 2. หากไม่มีไฟล์ JSON ให้ดึงจาก st.secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
@@ -55,7 +53,6 @@ def get_gspread_client():
     return gspread.authorize(credentials)
 
 def get_worksheet():
-    """ฟังก์ชันเปิด WorkSheet หลักของ Google Sheets"""
     gc = get_gspread_client()
     spreadsheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
     sh = gc.open(spreadsheet_name)
@@ -75,6 +72,7 @@ DEPT_EMAILS = {
     "QC": ["uchai@kftc.co.th", "sirirat@kftc.co.th", "pdd_1@kftc.co.th"],
     "PCD": ["pc-3@kftc.co.th", "pdd_1@kftc.co.th"],
     "PRD": ["suriya@kftc.co.th", "setthanan@kftc.co.th", "pd1center@kftc.co.th", "pdd_1@kftc.co.th"],
+    "PRO": ["suriya@kftc.co.th", "setthanan@kftc.co.th", "pd1center@kftc.co.th", "pdd_1@kftc.co.th"],
     "PDD_MGR": ["manoch@kftc.co.th"],
     "QCD_MGR": ["maitree@kftc.co.th"],
     "PRD_MGR": ["suriya@kftc.co.th"],
@@ -183,7 +181,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 👤 USERS (ดึงข้อมูลรหัสผ่านจาก st.secrets ทั้งหมด)
+# 👤 USERS
 # =============================================================
 sec_passwords = st.secrets.get("passwords", {})
 
@@ -295,7 +293,6 @@ def get_document_data(doc_no):
     return None
 
 def save_to_excel(data_dict):
-    """ฟังก์ชันบันทึกข้อมูลลง Google Sheets"""
     try:
         ws = get_worksheet()
         headers = ws.row_values(1)
@@ -618,42 +615,45 @@ else:
     uploaded_file = st.file_uploader("📷 อัปโหลดรูปภาพพิมพ์เขียวประกอบหัวข้อ SUBJECT (ถ้ามี):", type=["jpg", "png", "jpeg"], key=f"img_up_{reset_id}")
     
     if uploaded_file is not None:
-        safe_doc_name = doc_no.replace("/", "_") if doc_no else "temp"
-        image_path_to_save = os.path.join(UPLOAD_DIR, f"{safe_doc_name}.jpg")
-        
-        # ป้องกัน FileNotFoundError โดยการสร้างโฟลเดอร์ปลายทางก่อนบันทึก
-        save_dir = os.path.dirname(image_path_to_save)
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-            
-        image = Image.open(uploaded_file)
-        image.save(image_path_to_save)
-        st.image(image, caption="🖼️ ตัวอย่างรูปภาพที่เตรียมจัดเก็บ", use_container_width=True)
+        safe_doc_name = doc_no.replace("/", "_").replace("\\", "_") if doc_no else "temp"
+        image_filename = f"{safe_doc_name}_{uploaded_file.name}"
+        image_path = os.path.join(UPLOAD_DIR, image_filename)
+        with open(image_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        st.image(image_path, caption="รูปภาพประกอบรายการ", use_container_width=True)
 
+    # =============================================================
+    # 📋 รายการตรวจสอบ 19 ข้อ
+    # =============================================================
     st.markdown("---")
-    st.subheader("📋 ส่วนที่ 2: รายการตรวจสอบเอกสารที่เกี่ยวข้อง (Checklist Items)")
-
-    # ตารางแบบฟอร์ม Checklist สำหรับแผนกต่างๆ
+    st.subheader("📋 รายการเอกสารที่ต้องแก้ไขและลงนามผู้รับผิดชอบ (Checklist 19 ข้อ)")
+    
     form_data = {}
-    for item_num, (dept, title) in ITEM_DEPT_MAPPING.items():
-        st.write(f"**ข้อ {item_num}: {title}** ({dept})")
-        col1, col2, col3 = st.columns([1, 2, 2])
+    for num, (dept, title) in ITEM_DEPT_MAPPING.items():
+        st.markdown(f"**ข้อ {num}. [{dept}] {title}**")
+        c1, c2, c3 = st.columns([1, 2, 2])
         
-        is_dept_editable = (dept in selected_dept) or ("PDD" in selected_dept)
+        is_item_disabled = False if (dept in selected_dept or ("PRD" in selected_dept and dept == "PRO")) else True
         
-        with col1:
-            rev_val = st.selectbox(f"แก้ไขหรือไม่ #{item_num}", ["NO", "YES"], index=1 if get_val(f"DOC_{item_num}_REVISE") == "YES" else 0, disabled=not is_dept_editable, key=f"rev_{item_num}_{reset_id}")
-        with col2:
-            resp_val = st.text_input(f"ผู้รับผิดชอบ #{item_num}", value=get_val(f"DOC_{item_num}_RESP"), disabled=not is_dept_editable, key=f"resp_{item_num}_{reset_id}")
-        with col3:
-            plan_val = st.text_input(f"แผนเสร็จ #{item_num}", value=get_val(f"DOC_{item_num}_PLAN"), disabled=not is_dept_editable, key=f"plan_{item_num}_{reset_id}")
+        rev_saved = get_val(f"DOC_{num}_REVISE", "NO")
+        resp_saved = get_val(f"DOC_{num}_RESP", "")
+        plan_saved = get_val(f"DOC_{num}_PLAN", "")
 
-        form_data[f"DOC_{item_num}_REVISE"] = rev_val
-        form_data[f"DOC_{item_num}_RESP"] = resp_val
-        form_data[f"DOC_{item_num}_PLAN"] = plan_val
+        with c1:
+            rev_val = st.radio(f"แก้ไข? ({num})", ["NO", "YES"], index=1 if rev_saved == "YES" else 0, horizontal=True, disabled=is_item_disabled, key=f"rev_{num}_{reset_id}")
+            form_data[f"DOC_{num}_REVISE"] = rev_val
 
-   # =============================================================
-    # 💾 บันทึกข้อมูล (ปรับปรุงระบบแจ้งเตือน Email อัตโนมัติ)
+        with c2:
+            resp_val = st.text_input(f"ผู้รับผิดชอบ ({num})", value=resp_saved, disabled=is_item_disabled, key=f"resp_{num}_{reset_id}")
+            form_data[f"DOC_{num}_RESP"] = resp_val
+
+        with c3:
+            plan_val = st.text_input(f"กำหนดเสร็จ PLAN ({num})", value=plan_saved, disabled=is_item_disabled, key=f"plan_{num}_{reset_id}")
+            form_data[f"DOC_{num}_PLAN"] = plan_val
+        st.markdown("<hr style='margin:5px 0;'>", unsafe_allow_html=True)
+
+    # =============================================================
+    # 💾 บันทึกข้อมูล & ส่ง Email อัตโนมัติ
     # =============================================================
     st.markdown("---")
     if st.button("💾 บันทึกข้อมูล (Save Data)", type="primary", use_container_width=True):
@@ -683,23 +683,19 @@ else:
                 **form_data
             }
             
-            # บันทึกลง Google Sheets
             if save_to_excel(save_payload):
                 st.success("✅ บันทึกข้อมูลเข้าสู่ฐานข้อมูล Google Sheets เรียบร้อยแล้ว!")
                 
-                # ---------------------------------------------------------
-                # 📩 ตรวจสอบและส่ง Email แจ้งเตือนแผนกถัดไป
-                # ---------------------------------------------------------
+                # 📩 ถ้า PDD บันทึกข้อมูล ส่งอีเมลแจ้งเตือนไปที่แผนก QC ต่อทันที
                 if "PDD" in selected_dept:
-                    # เมื่อ PDD บันทึกเสร็จ ให้ส่งแจ้งเตือนไปที่แผนก QC ต่อทันที
                     if send_next_dept_alert_email(doc_no, customer_name, part_name, target_dept="QC"):
                         st.info("📩 ส่งอีเมลแจ้งเตือนไปยังทีม QC เรียบร้อยแล้ว")
-                
-                # เช็กว่ากรอกครบทุกข้อ 19 ข้อแล้วหรือยัง
+
+                # 📩 เช็กว่ากรอกครบทุกข้อ 19 ข้อแล้วหรือยัง หากครบให้แจ้ง PDD MGR
                 if check_all_departments_completed(doc_no):
                     save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "FINISH"})
                     send_all_completed_alert_email(doc_no, customer_name, part_name)
-                    st.info("🎉 กรอกข้อมูลครบถ้วนแล้ว! ส่งอีเมลแจ้งเตือน PDD MGR เพื่อรออนุมัติเรียบร้อย")
+                    st.info("🎉 กรอกข้อมูลครบถ้วนแล้ว! ส่งอีเมลแจ้งเตือน PDD MGR เรียบร้อย")
                 else:
                     save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "PENDING"})
 
