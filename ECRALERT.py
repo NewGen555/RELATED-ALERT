@@ -26,7 +26,7 @@ if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # =============================================================
-# CONNECT GOOGLE SHEETS API
+# CONNECT GOOGLE SHEETS API (รองรับทั้ง service_account.json และ st.secrets)
 # =============================================================
 @st.cache_resource
 def get_gspread_client():
@@ -34,18 +34,32 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # แปลง st.secrets ให้เป็น dict
-    creds_dict = dict(st.secrets["gcp_service_account"])
     
-    # แปลงตัวอักษร escape sequence ให้ถูกต้อง
-    if "private_key" in creds_dict:
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    # 1. ลองอ่านจากไฟล์ service_account.json ก่อน (เสถียรที่สุด)
+    json_path = os.path.join(os.path.dirname(__file__), "service_account.json")
+    if os.path.exists(json_path):
+        credentials = service_account.Credentials.from_service_account_file(
+            json_path,
+            scopes=scopes
+        )
+    else:
+        # 2. หากไม่มีไฟล์ JSON ให้ดึงจาก st.secrets
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=scopes
+        )
         
-    credentials = service_account.Credentials.from_service_account_info(
-        creds_dict,
-        scopes=scopes
-    )
     return gspread.authorize(credentials)
+
+def get_worksheet():
+    """ฟังก์ชันเปิด WorkSheet หลักของ Google Sheets"""
+    gc = get_gspread_client()
+    spreadsheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
+    sh = gc.open(spreadsheet_name)
+    return sh.sheet1
 
 # =============================================================
 # CONFIGURATION: SMTP EMAIL SETTINGS & DEPARTMENT EMAILS
@@ -215,32 +229,6 @@ def logout():
 def clear_all_inputs():
     st.session_state.form_reset_counter += 1
     st.rerun()
-
-    # =============================================================
-# 🟢 GOOGLE SHEETS CONNECTION FUNCTIONS
-# =============================================================
-@st.cache_resource
-def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    if "private_key" in creds_dict:
-        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        
-    credentials = service_account.Credentials.from_service_account_info(
-        creds_dict,
-        scopes=scopes
-    )
-    return gspread.authorize(credentials)
-
-def get_worksheet():
-    """ฟังก์ชันเปิด WorkSheet หลักของ Google Sheets"""
-    gc = get_gspread_client()
-    spreadsheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
-    sh = gc.open(spreadsheet_name)
-    return sh.sheet1  # หรือ sh.worksheet("Sheet1") ตามชื่อชีทที่ใช้งานจริง
 
 # =============================================================
 # 🔐 LOGIN UI
@@ -623,107 +611,96 @@ else:
 
     st.markdown("---")
     subject_text = st.text_area("SUBJECT (บันทึกเนื้อหารายรายละเอียดสาเหตุการแก้ไขแบบวิศวกรรม):", value=get_val("SUBJECT_TEXT"), disabled=is_disabled, key=f"subj_{reset_id}")
-    image_path_to_save = get_val("SUBJECT_IMAGE_PATH")
+
+    # =============================================================
+    # 📷 ส่วนการอัปโหลดและแสดงผลรูปภาพ
+    # =============================================================
+    uploaded_file = st.file_uploader("📷 อัปโหลดรูปภาพพิมพ์เขียวประกอบหัวข้อ SUBJECT (ถ้ามี):", type=["jpg", "png", "jpeg"], key=f"img_up_{reset_id}")
     
-    if "PDD" in selected_dept:
-        uploaded_image = st.file_uploader("อัปโหลดรูปภาพพิมพ์เขียวประกอบหัวข้อ SUBJECT (ถ้ามี):", type=["png", "jpg", "jpeg"], key=f"img_{reset_id}")
-        if uploaded_image is not None and doc_no != "":
-            image = Image.open(uploaded_image)
-            st.image(image, caption="📷 ตัวอย่างรูปภาพที่เตรียมจัดเก็บ", width=300)
-            img_dir = "stored_images"
-            if not os.path.exists(img_dir): os.makedirs(img_dir)
-            image_path_to_save = os.path.join(img_dir, f"{doc_no}_subject.png")
-            image.save(image_path_to_save)
-    else:
-        if image_path_to_save and os.path.exists(image_path_to_save):
-            st.image(Image.open(image_path_to_save), caption="📷 รูปภาพประกอบที่ส่งต่อมาจากแผนก PDD", width=300)
+    if uploaded_file is not None:
+        safe_doc_name = doc_no.replace("/", "_") if doc_no else "temp"
+        image_path_to_save = os.path.join(UPLOAD_DIR, f"{safe_doc_name}.jpg")
+        
+        # ป้องกัน FileNotFoundError โดยการสร้างโฟลเดอร์ปลายทางก่อนบันทึก
+        save_dir = os.path.dirname(image_path_to_save)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            
+        image = Image.open(uploaded_file)
+        image.save(image_path_to_save)
+        st.image(image, caption="🖼️ ตัวอย่างรูปภาพที่เตรียมจัดเก็บ", use_container_width=True)
 
     st.markdown("---")
-    dept_docs_mapping = {}
-    current_dept_key = ""
+    st.subheader("📋 ส่วนที่ 2: รายการตรวจสอบเอกสารที่เกี่ยวข้อง (Checklist Items)")
 
-    if "PDD" in selected_dept:
-        current_dept_key = "PDD"
-        dept_docs_mapping = {
-            1: "MASTER DRAWING.", 2: "MATERIAL PART NO. LIST. , ACC DWG.",
-            3: "PROCESS FLOW CHART.", 4: "OPERATION MANUAL.",
-            5: "TEST RESULT.", 6: "FMEA", 7: "TOOLING No"
-        }
-    elif "QC" in selected_dept:
-        current_dept_key = "QC"
-        dept_docs_mapping = {
-            8: "CONTROL PLAN.", 9: "INCOMING SHEET.",
-            10: "FINAL INSPECTION SHEET.", 11: "W/I Out Going / TRAINING QC.",
-            12: "INSPECTION STD. + DATA CHECK.", 13: "MSA",
-            14: "PSW UP-DATE., PPAP APPROVAL.", 15: "CHECKING FIXTURE."
-        }
-    elif "PCD" in selected_dept:
-        current_dept_key = "PCD"
-        dept_docs_mapping = {
-            16: "MATERIAL REQUIREMENT.", 17: "PACKING STANDARD."
-        }
-    elif "PRO" in selected_dept:
-        current_dept_key = "PRD"
-        dept_docs_mapping = {
-            18: "WORKING INSTRUCTION.", 19: "TRAINING PRODUCTION."
-        }
-
-    st.subheader(f"📋 ส่วนที่ 2: รายการเอกสารที่ต้องดำเนินการประเมิน (สำหรับแผนก {selected_dept})")
-    
-    dept_form_data = {}
-    for num, title in dept_docs_mapping.items():
-        st.markdown(f"**ข้อ {num}. {title}**")
-        c1, c2, c3 = st.columns([1, 2, 2])
-        with c1:
-            rev_val = st.radio(f"แก้ไข? (ข้อ {num})", ["NO", "YES"], index=0 if get_val(f"DOC_{num}_REVISE", "NO") == "NO" else 1, key=f"rev_{num}_{reset_id}")
-        with c2:
-            resp_val = st.text_input(f"ผู้รับผิดชอบ (ข้อ {num})", value=get_val(f"DOC_{num}_RESP"), key=f"resp_{num}_{reset_id}")
-        with c3:
-            saved_doc_plan = get_val(f"DOC_{num}_PLAN")
-            try: default_doc_plan = date.fromisoformat(saved_doc_plan) if saved_doc_plan else date.today()
-            except ValueError: default_doc_plan = date.today()
-            plan_val = st.date_input(f"กำหนดเสร็จ (ข้อ {num})", value=default_doc_plan, key=f"plan_{num}_{reset_id}")
+    # ตารางแบบฟอร์ม Checklist สำหรับแผนกต่างๆ
+    form_data = {}
+    for item_num, (dept, title) in ITEM_DEPT_MAPPING.items():
+        st.write(f"**ข้อ {item_num}: {title}** ({dept})")
+        col1, col2, col3 = st.columns([1, 2, 2])
         
-        dept_form_data[f"DOC_{num}_REVISE"] = rev_val
-        dept_form_data[f"DOC_{num}_RESP"] = resp_val
-        dept_form_data[f"DOC_{num}_PLAN"] = plan_val.strftime('%Y-%m-%d')
-        st.markdown("---")
+        is_dept_editable = (dept in selected_dept) or ("PDD" in selected_dept)
+        
+        with col1:
+            rev_val = st.selectbox(f"แก้ไขหรือไม่ #{item_num}", ["NO", "YES"], index=1 if get_val(f"DOC_{item_num}_REVISE") == "YES" else 0, disabled=not is_dept_editable, key=f"rev_{item_num}_{reset_id}")
+        with col2:
+            resp_val = st.text_input(f"ผู้รับผิดชอบ #{item_num}", value=get_val(f"DOC_{item_num}_RESP"), disabled=not is_dept_editable, key=f"resp_{item_num}_{reset_id}")
+        with col3:
+            plan_val = st.text_input(f"แผนเสร็จ #{item_num}", value=get_val(f"DOC_{item_num}_PLAN"), disabled=not is_dept_editable, key=f"plan_{item_num}_{reset_id}")
 
-    if st.button("💾 บันทึกข้อมูลใบงาน (Save Progress)", type="primary", use_container_width=True):
+        form_data[f"DOC_{item_num}_REVISE"] = rev_val
+        form_data[f"DOC_{item_num}_RESP"] = resp_val
+        form_data[f"DOC_{item_num}_PLAN"] = plan_val
+
+   # =============================================================
+    # 💾 บันทึกข้อมูล (ปรับปรุงระบบแจ้งเตือน Email อัตโนมัติ)
+    # =============================================================
+    st.markdown("---")
+    if st.button("💾 บันทึกข้อมูล (Save Data)", type="primary", use_container_width=True):
         if not doc_no:
-            st.error("❌ กรุณาระบุ DOCUMENT NO. ก่อนทำรายการบันทึก")
+            st.error("❌ กรุณาระบุ DOCUMENT NO. ก่อนทำการบันทึกข้อมูล")
         else:
-            save_payload = {"DOCUMENT_NO": doc_no, "DATE": date.today().strftime('%Y-%m-%d')}
-            if "PDD" in selected_dept:
-                save_payload.update({
-                    "CUSTOMER_NAME": customer_name, "PART_NAME": part_name, "PART_NO": part_no,
-                    "MODEL": model_name, "MASTER_DWG_NO": master_dwg, "ISSUE_BY": issue_by,
-                    "REF_DOC_TYPE": ref_doc_type, "REF_DOC_NO": ref_doc_no,
-                    "EFF_EVENT": eff_event, "EFF_PLAN": eff_plan.strftime('%Y-%m-%d'),
-                    "ATTACH_DRAWING": "YES" if att_dwg else "NO",
-                    "ATTACH_ECI": "YES" if att_eci else "NO",
-                    "ATTACH_MEETING": "YES" if att_meeting else "NO",
-                    "ATTACH_OTHERS": "YES" if att_others else "NO",
-                    "ATTACH_OTHERS_DETAIL": att_others_detail,
-                    "JUDGEMENT": judgement, "SUBJECT_TEXT": subject_text,
-                    "SUBJECT_IMAGE_PATH": image_path_to_save if image_path_to_save else "",
-                    "DOC_STATUS": "IN_PROGRESS"
-                })
+            save_payload = {
+                "DOCUMENT_NO": doc_no,
+                "CUSTOMER_NAME": customer_name,
+                "PART_NAME": part_name,
+                "PART_NO": part_no,
+                "MODEL": model_name,
+                "MASTER_DWG_NO": master_dwg,
+                "ISSUE_BY": issue_by,
+                "REF_DOC_TYPE": ref_doc_type,
+                "REF_DOC_NO": ref_doc_no,
+                "EFF_EVENT": eff_event,
+                "EFF_PLAN": eff_plan.strftime('%Y-%m-%d') if isinstance(eff_plan, date) else str(eff_plan),
+                "ATTACH_DRAWING": "YES" if att_dwg else "NO",
+                "ATTACH_ECI": "YES" if att_eci else "NO",
+                "ATTACH_MEETING": "YES" if att_meeting else "NO",
+                "ATTACH_OTHERS": "YES" if att_others else "NO",
+                "ATTACH_OTHERS_DETAIL": att_others_detail,
+                "JUDGEMENT": judgement,
+                "SUBJECT_TEXT": subject_text,
+                "DATE": date.today().strftime('%Y-%m-%d'),
+                **form_data
+            }
             
-            save_payload.update(dept_form_data)
-            
+            # บันทึกลง Google Sheets
             if save_to_excel(save_payload):
-                st.success("✅ บันทึกข้อมูลลงในฐานข้อมูล Google Sheets เรียบร้อยแล้ว!")
+                st.success("✅ บันทึกข้อมูลเข้าสู่ฐานข้อมูล Google Sheets เรียบร้อยแล้ว!")
                 
-                # ตรวจสอบการส่งแจ้งเตือน Email
+                # ---------------------------------------------------------
+                # 📩 ตรวจสอบและส่ง Email แจ้งเตือนแผนกถัดไป
+                # ---------------------------------------------------------
+                if "PDD" in selected_dept:
+                    # เมื่อ PDD บันทึกเสร็จ ให้ส่งแจ้งเตือนไปที่แผนก QC ต่อทันที
+                    if send_next_dept_alert_email(doc_no, customer_name, part_name, target_dept="QC"):
+                        st.info("📩 ส่งอีเมลแจ้งเตือนไปยังทีม QC เรียบร้อยแล้ว")
+                
+                # เช็กว่ากรอกครบทุกข้อ 19 ข้อแล้วหรือยัง
                 if check_all_departments_completed(doc_no):
                     save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "FINISH"})
                     send_all_completed_alert_email(doc_no, customer_name, part_name)
-                    st.info("📧 ส่งอีเมลแจ้งเตือนไปยัง PDD MGR เพื่อพิจารณาลงนามเป็นลำดับแรกเรียบร้อยแล้ว")
+                    st.info("🎉 กรอกข้อมูลครบถ้วนแล้ว! ส่งอีเมลแจ้งเตือน PDD MGR เพื่อรออนุมัติเรียบร้อย")
                 else:
-                    next_dept_map = {"PDD": "QC", "QC": "PCD", "PCD": "PRD"}
-                    if current_dept_key in next_dept_map:
-                        next_dept = next_dept_map[current_dept_key]
-                        send_next_dept_alert_email(doc_no, customer_name, part_name, next_dept)
-                        st.info(f"📧 ส่งอีเมล แจ้งเตือนคิวงานถัดไปให้แผนก {next_dept} เรียบร้อยแล้ว")
+                    save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "PENDING"})
+
                 st.rerun()
