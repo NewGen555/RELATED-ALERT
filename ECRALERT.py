@@ -34,16 +34,18 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
+    # แปลง st.secrets ให้เป็น dict
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    
+    # แปลงตัวอักษร escape sequence ให้ถูกต้อง
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
     credentials = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
+        creds_dict,
         scopes=scopes
     )
     return gspread.authorize(credentials)
-
-def get_worksheet():
-    gc = get_gspread_client()
-    sheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
-    return gc.open(sheet_name).sheet1
 
 # =============================================================
 # CONFIGURATION: SMTP EMAIL SETTINGS & DEPARTMENT EMAILS
@@ -167,21 +169,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =============================================================
-# 👤 USERS
+# 👤 USERS (ดึงข้อมูลรหัสผ่านจาก st.secrets ทั้งหมด)
 # =============================================================
 sec_passwords = st.secrets.get("passwords", {})
 
 USERS = {
-    "Thanawat": {"password": sec_passwords.get("Thanawat", "62044"), "dept": "PDD (Product Design)", "name": "ENGINEER PDD"},
-    "qc_user": {"password": sec_passwords.get("qc_user", "qc1234"), "dept": "QC (Quality Control)", "name": "ENGINEER QC"},
-    "pcd_user": {"password": sec_passwords.get("pcd_user", "pcd1234"), "dept": "PCD (Production Control)", "name": "ENGINEER PCD"},
-    "prd_user": {"password": sec_passwords.get("prd_user", "prd1234"), "dept": "PRO (Production / PD)", "name": "ENGINEER Production"},
-    "mgr_pdd": {"password": sec_passwords.get("mgr_pdd", "mgrpdd1"), "dept": "MGR - PDD (ผู้จัดการ PDD)", "name": "ผู้จัดการ PDD"},
-    "mgr_qcd": {"password": sec_passwords.get("mgr_qcd", "mgrqc1"), "dept": "MGR - QCD (ผู้จัดการ QC)", "name": "ผู้จัดการ QC"},
-    "mgr_pcd": {"password": sec_passwords.get("mgr_pcd", "mgrpcd1"), "dept": "MGR - PCD (ผู้จัดการ PCD)", "name": "ผู้จัดการ PCD"},
-    "mgr_prd": {"password": sec_passwords.get("mgr_prd", "mgrprd1"), "dept": "MGR - PD (ผู้จัดการ Production)", "name": "ผู้จัดการ PRD"},
-    "gm_user": {"password": sec_passwords.get("gm_user", "gm1234"), "dept": "AGM / GM (ผู้บริหารอนุมัติขั้นสุดท้าย)", "name": "ผู้บริหาร GM"},
-    "print_user": {"password": sec_passwords.get("print_user", "print1"), "dept": "Print Form", "name": "เจ้าหน้าที่พิมพ์เอกสาร"},
+    "Thanawat": {"password": sec_passwords.get("Thanawat", ""), "dept": "PDD (Product Design)", "name": "ENGINEER PDD"},
+    "qc_user": {"password": sec_passwords.get("qc_user", ""), "dept": "QC (Quality Control)", "name": "ENGINEER QC"},
+    "pcd_user": {"password": sec_passwords.get("pcd_user", ""), "dept": "PCD (Production Control)", "name": "ENGINEER PCD"},
+    "prd_user": {"password": sec_passwords.get("prd_user", ""), "dept": "PRO (Production / PD)", "name": "ENGINEER Production"},
+    "mgr_pdd": {"password": sec_passwords.get("mgr_pdd", ""), "dept": "MGR - PDD (ผู้จัดการ PDD)", "name": "ผู้จัดการ PDD"},
+    "mgr_qcd": {"password": sec_passwords.get("mgr_qcd", ""), "dept": "MGR - QCD (ผู้จัดการ QC)", "name": "ผู้จัดการ QC"},
+    "mgr_pcd": {"password": sec_passwords.get("mgr_pcd", ""), "dept": "MGR - PCD (ผู้จัดการ PCD)", "name": "ผู้จัดการ PCD"},
+    "mgr_prd": {"password": sec_passwords.get("mgr_prd", ""), "dept": "MGR - PD (ผู้จัดการ Production)", "name": "ผู้จัดการ PRD"},
+    "gm_user": {"password": sec_passwords.get("gm_user", ""), "dept": "AGM / GM (ผู้บริหารอนุมัติขั้นสุดท้าย)", "name": "ผู้บริหาร GM"},
+    "print_user": {"password": sec_passwords.get("print_user", ""), "dept": "Print Form", "name": "เจ้าหน้าที่พิมพ์เอกสาร"},
 }
 
 if "logged_in" not in st.session_state:
@@ -195,7 +197,7 @@ if "form_reset_counter" not in st.session_state:
 
 def login(username, password):
     user = USERS.get(username)
-    if user and user["password"] == password:
+    if user and user["password"] != "" and user["password"] == password:
         st.session_state.logged_in = True
         st.session_state.current_user = username
         st.session_state.current_dept = user["dept"]
@@ -213,6 +215,32 @@ def logout():
 def clear_all_inputs():
     st.session_state.form_reset_counter += 1
     st.rerun()
+
+    # =============================================================
+# 🟢 GOOGLE SHEETS CONNECTION FUNCTIONS
+# =============================================================
+@st.cache_resource
+def get_gspread_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+    credentials = service_account.Credentials.from_service_account_info(
+        creds_dict,
+        scopes=scopes
+    )
+    return gspread.authorize(credentials)
+
+def get_worksheet():
+    """ฟังก์ชันเปิด WorkSheet หลักของ Google Sheets"""
+    gc = get_gspread_client()
+    spreadsheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
+    sh = gc.open(spreadsheet_name)
+    return sh.sheet1  # หรือ sh.worksheet("Sheet1") ตามชื่อชีทที่ใช้งานจริง
 
 # =============================================================
 # 🔐 LOGIN UI
@@ -469,8 +497,8 @@ elif "MGR" in selected_dept or "GM" in selected_dept:
             mgr_name = st.text_input("พิมพ์ชื่อ-นามสกุล ของคุณเพื่อใช้ยืนยันการอนุมัติ :", key=f"mgr_name_{reset_id}").strip()
             
             if doc_status != "FINISH" and doc_status != "APPROVED":
-                missing_items = get_missing_items(approve_doc_no)
                 st.warning("⚠️ เอกสารนี้ยังไม่อยู่ในสถานะ 'FINISH' เนื่องจากพนักงานยังกรอกข้อมูลไม่ครบถ้วน")
+                missing_items = get_missing_items(approve_doc_no)
                 if missing_items:
                     with st.expander("🔍 **คลิกเพื่อดูรายการข้อและแผนกที่ยังไม่ได้กรอกข้อมูล**", expanded=True):
                         for item in missing_items:
@@ -617,104 +645,85 @@ else:
     if "PDD" in selected_dept:
         current_dept_key = "PDD"
         dept_docs_mapping = {
-            1: "MASTER DRAWING.", 2: "MATERIAL PART NO. LIST. , ACC DWG.", 
-            3: "PROCESS FLOW CHART.", 4: "OPERATION MANUAL.", 
-            5: "TEST RESULT.", 6: "FMEA (APQP TEAM)", 7: "TOOLING No"
+            1: "MASTER DRAWING.", 2: "MATERIAL PART NO. LIST. , ACC DWG.",
+            3: "PROCESS FLOW CHART.", 4: "OPERATION MANUAL.",
+            5: "TEST RESULT.", 6: "FMEA", 7: "TOOLING No"
         }
     elif "QC" in selected_dept:
         current_dept_key = "QC"
         dept_docs_mapping = {
-            8: "CONTROL PLAN.", 9: "INCOMING SHEET.", 
-            10: "FINAL INSPECTION SHEET.", 11: "W/I Out Going / TRAINING QC.", 
-            12: "INSPECTION STD. + DATA CHECK.", 13: "MSA", 
+            8: "CONTROL PLAN.", 9: "INCOMING SHEET.",
+            10: "FINAL INSPECTION SHEET.", 11: "W/I Out Going / TRAINING QC.",
+            12: "INSPECTION STD. + DATA CHECK.", 13: "MSA",
             14: "PSW UP-DATE., PPAP APPROVAL.", 15: "CHECKING FIXTURE."
         }
     elif "PCD" in selected_dept:
         current_dept_key = "PCD"
-        dept_docs_mapping = {16: "MATERIAL REQUIREMENT.", 17: "PACKING STANDARD."}
+        dept_docs_mapping = {
+            16: "MATERIAL REQUIREMENT.", 17: "PACKING STANDARD."
+        }
     elif "PRO" in selected_dept:
         current_dept_key = "PRD"
-        dept_docs_mapping = {18: "WORKING INSTRUCTION.", 19: "TRAINING PRODUCTION."}
+        dept_docs_mapping = {
+            18: "WORKING INSTRUCTION.", 19: "TRAINING PRODUCTION."
+        }
 
-    st.subheader(f"📋 ส่วนที่ 2: กรอกรายการตรวจสอบสำหรับแผนก {current_dept_key}")
-    dept_inputs = {}
+    st.subheader(f"📋 ส่วนที่ 2: รายการเอกสารที่ต้องดำเนินการประเมิน (สำหรับแผนก {selected_dept})")
+    
+    dept_form_data = {}
+    for num, title in dept_docs_mapping.items():
+        st.markdown(f"**ข้อ {num}. {title}**")
+        c1, c2, c3 = st.columns([1, 2, 2])
+        with c1:
+            rev_val = st.radio(f"แก้ไข? (ข้อ {num})", ["NO", "YES"], index=0 if get_val(f"DOC_{num}_REVISE", "NO") == "NO" else 1, key=f"rev_{num}_{reset_id}")
+        with c2:
+            resp_val = st.text_input(f"ผู้รับผิดชอบ (ข้อ {num})", value=get_val(f"DOC_{num}_RESP"), key=f"resp_{num}_{reset_id}")
+        with c3:
+            saved_doc_plan = get_val(f"DOC_{num}_PLAN")
+            try: default_doc_plan = date.fromisoformat(saved_doc_plan) if saved_doc_plan else date.today()
+            except ValueError: default_doc_plan = date.today()
+            plan_val = st.date_input(f"กำหนดเสร็จ (ข้อ {num})", value=default_doc_plan, key=f"plan_{num}_{reset_id}")
+        
+        dept_form_data[f"DOC_{num}_REVISE"] = rev_val
+        dept_form_data[f"DOC_{num}_RESP"] = resp_val
+        dept_form_data[f"DOC_{num}_PLAN"] = plan_val.strftime('%Y-%m-%d')
+        st.markdown("---")
 
-    for num, doc_name in dept_docs_mapping.items():
-        with st.expander(f"📄 ข้อ {num}: {doc_name}", expanded=True):
-            c1, c2, c3 = st.columns([1, 2, 2])
-            saved_rev = get_val(f"DOC_{num}_REVISE", "NO")
-            rev_options = ["NO", "YES"]
-            rev_index = rev_options.index(saved_rev) if saved_rev in rev_options else 0
-
-            with c1: rev = st.radio(f"REVISE", rev_options, index=rev_index, key=f"rev_{num}_{reset_id}", horizontal=True)
-            with c2: resp = st.text_input(f"RESPONSIBILITY PERSON", value=get_val(f"DOC_{num}_RESP"), key=f"resp_{num}_{reset_id}")
-            
-            saved_plan = get_val(f"DOC_{num}_PLAN")
-            try: p_date_val = date.fromisoformat(saved_plan) if saved_plan else date.today()
-            except ValueError: p_date_val = date.today()
-            with c3: p_date = st.date_input(f"PLAN TO FINISH", value=p_date_val, key=f"plan_{num}_{reset_id}")
-
-            dept_inputs[f"DOC_{num}_REVISE"] = rev
-            dept_inputs[f"DOC_{num}_RESP"] = resp
-            dept_inputs[f"DOC_{num}_PLAN"] = p_date.strftime('%Y-%m-%d')
-
-    if "PDD" in selected_dept:
-        col_btn_save, col_btn_clear = st.columns([3, 1])
-        with col_btn_save:
-            btn_save = st.button("💾 บันทึกข้อมูลและส่งต่อขั้นตอนถัดไป", type="primary", use_container_width=True)
-        with col_btn_clear:
-            btn_clear = st.button("🗑️ Clear ข้อมูลทั้งหมด", use_container_width=True)
-    else:
-        btn_save = st.button("💾 บันทึกข้อมูลและส่งต่อขั้นตอนถัดไป", type="primary", use_container_width=True)
-        btn_clear = False
-
-    if btn_clear:
-        clear_all_inputs()
-
-    if btn_save:
+    if st.button("💾 บันทึกข้อมูลใบงาน (Save Progress)", type="primary", use_container_width=True):
         if not doc_no:
-            st.error("❌ กรุณากรอก DOCUMENT NO. ก่อนบันทึกข้อมูล")
+            st.error("❌ กรุณาระบุ DOCUMENT NO. ก่อนทำรายการบันทึก")
         else:
-            unfilled_items = []
-            for num, doc_name in dept_docs_mapping.items():
-                rev_val = dept_inputs.get(f"DOC_{num}_REVISE", "NO")
-                resp_val = dept_inputs.get(f"DOC_{num}_RESP", "").strip()
+            save_payload = {"DOCUMENT_NO": doc_no, "DATE": date.today().strftime('%Y-%m-%d')}
+            if "PDD" in selected_dept:
+                save_payload.update({
+                    "CUSTOMER_NAME": customer_name, "PART_NAME": part_name, "PART_NO": part_no,
+                    "MODEL": model_name, "MASTER_DWG_NO": master_dwg, "ISSUE_BY": issue_by,
+                    "REF_DOC_TYPE": ref_doc_type, "REF_DOC_NO": ref_doc_no,
+                    "EFF_EVENT": eff_event, "EFF_PLAN": eff_plan.strftime('%Y-%m-%d'),
+                    "ATTACH_DRAWING": "YES" if att_dwg else "NO",
+                    "ATTACH_ECI": "YES" if att_eci else "NO",
+                    "ATTACH_MEETING": "YES" if att_meeting else "NO",
+                    "ATTACH_OTHERS": "YES" if att_others else "NO",
+                    "ATTACH_OTHERS_DETAIL": att_others_detail,
+                    "JUDGEMENT": judgement, "SUBJECT_TEXT": subject_text,
+                    "SUBJECT_IMAGE_PATH": image_path_to_save if image_path_to_save else "",
+                    "DOC_STATUS": "IN_PROGRESS"
+                })
+            
+            save_payload.update(dept_form_data)
+            
+            if save_to_excel(save_payload):
+                st.success("✅ บันทึกข้อมูลลงในฐานข้อมูล Google Sheets เรียบร้อยแล้ว!")
                 
-                if rev_val == "YES" and (not resp_val or resp_val == "-"):
-                    unfilled_items.append(f"ข้อ {num}: {doc_name}")
-
-            if unfilled_items:
-                st.error(f"❌ แผนก {current_dept_key} ยังกรอกข้อมูลไม่ครบถ้วน! รายการที่เลือก REVISE เป็น 'YES' กรุณาระบุชื่อผู้รับผิดชอบ")
-                with st.expander("🔍 **คลิกเพื่อดูรายการข้อที่ต้องระบุผู้รับผิดชอบ**", expanded=True):
-                    for item in unfilled_items:
-                        st.write(f"⚠️ {item}")
-            else:
-                save_payload = {"DOCUMENT_NO": doc_no, "DOC_STATUS": "IN_PROGRESS"}
-                
-                if current_dept_key == "PDD":
-                    save_payload.update({
-                        "CUSTOMER_NAME": customer_name, "PART_NAME": part_name, "PART_NO": part_no,
-                        "MODEL": model_name, "MASTER_DWG_NO": master_dwg, "DATE": date.today().strftime('%Y-%m-%d'),
-                        "ISSUE_BY": issue_by, "REF_DOC_TYPE": ref_doc_type, "REF_DOC_NO": ref_doc_no,
-                        "EFF_EVENT": eff_event, "EFF_PLAN": eff_plan.strftime('%Y-%m-%d'),
-                        "ATTACH_DRAWING": "YES" if att_dwg else "NO", "ATTACH_ECI": "YES" if att_eci else "NO",
-                        "ATTACH_MEETING": "YES" if att_meeting else "NO", "ATTACH_OTHERS": "YES" if att_others else "NO",
-                        "ATTACH_OTHERS_DETAIL": att_others_detail, "JUDGEMENT": judgement,
-                        "SUBJECT_TEXT": subject_text, "SUBJECT_IMAGE_PATH": image_path_to_save
-                    })
-                
-                save_payload.update(dept_inputs)
-
-                if save_to_excel(save_payload):
-                    st.success(f"✅ บันทึกข้อมูลของแผนก {current_dept_key} ลง Google Sheets เรียบร้อยแล้ว!")
-                    
-                    if check_all_departments_completed(doc_no):
-                        save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "FINISH"})
-                        st.balloons()
-                        st.success("🎉 ทุกแผนกกรอกข้อมูลครบทั้ง 19 ข้อเรียบร้อยแล้ว! เอกสารเปลี่ยนสถานะเป็น 'FINISH' รอ MGR อนุมัติ")
-                        send_all_completed_alert_email(doc_no, customer_name if 'customer_name' in locals() else "", part_name if 'part_name' in locals() else "")
-                    else:
-                        next_dept_map = {"PDD": "QC", "QC": "PCD", "PCD": "PRD"}
-                        next_target = next_dept_map.get(current_dept_key)
-                        if next_target:
-                            send_next_dept_alert_email(doc_no, customer_name if 'customer_name' in locals() else "", part_name if 'part_name' in locals() else "", next_target)
+                # ตรวจสอบการส่งแจ้งเตือน Email
+                if check_all_departments_completed(doc_no):
+                    save_to_excel({"DOCUMENT_NO": doc_no, "DOC_STATUS": "FINISH"})
+                    send_all_completed_alert_email(doc_no, customer_name, part_name)
+                    st.info("📧 ส่งอีเมลแจ้งเตือนไปยัง PDD MGR เพื่อพิจารณาลงนามเป็นลำดับแรกเรียบร้อยแล้ว")
+                else:
+                    next_dept_map = {"PDD": "QC", "QC": "PCD", "PCD": "PRD"}
+                    if current_dept_key in next_dept_map:
+                        next_dept = next_dept_map[current_dept_key]
+                        send_next_dept_alert_email(doc_no, customer_name, part_name, next_dept)
+                        st.info(f"📧 ส่งอีเมล แจ้งเตือนคิวงานถัดไปให้แผนก {next_dept} เรียบร้อยแล้ว")
+                st.rerun()
