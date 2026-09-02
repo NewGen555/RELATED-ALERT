@@ -377,9 +377,28 @@ def check_yes_items_completed(doc_data):
 def get_realtime_location(row):
     status = str(row.get('DOC_STATUS', '')).strip().upper()
     
+    # 1. เช็กว่าอนุมัติเสร็จสมบูรณ์ระดับ GM หรือยัง
     if status == "APPROVED" or row.get('APPR_GM'):
         return "🟢 อนุมัติเสร็จสมบูรณ์แล้ว", "อนุมัติครบถ้วน (GM Approved)", "SUCCESS"
     
+    # 2. เช็กรายการค้างปิดข้อ YES (ข้อ 1-19) ก่อนเป็นลำดับแรก
+    pending_depts = set()
+    for num in range(1, 20):
+        rev = get_doc_value(row, num, "REVISE").upper()
+        if rev == "YES":
+            close_val = get_doc_value(row, num, "CLOSE")
+            resp_val = get_doc_value(row, num, "RESP")
+            # ถ้ายังไม่มีผู้รับผิดชอบ หรือ ยังไม่ได้ใส่ Actual Close (หรือใส่ -)
+            if not close_val or close_val == "-" or not resp_val or resp_val == "-":
+                dept, _ = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
+                pending_depts.add(dept)
+                
+    # หากมีแผนกที่ยังปิดข้อ YES ไม่ครบ ให้ขึ้นสถานะ กำลังดำเนินการ (และแสดงแผนกที่ติดอยู่)
+    if pending_depts:
+        depts_str = ", ".join(sorted(list(pending_depts)))
+        return "🔵 กำลังดำเนินการ", f"ติดอยู่ที่แผนก: {depts_str} (รอปิดข้อ YES & ลง Actual Close)", "ENGINEER"
+
+    # 3. หากปิดข้อ YES ครบทุกข้อแล้ว จึงจะเข้าสู่ลูปการรอ Manager อนุมัติ
     if not row.get('APPR_PDD_MGR'):
         return "🟡 รอการอนุมัติ", "อยู่ที่แผนก: PDD (รอ PDD Manager ลงนาม)", "MGR"
     elif not row.get('APPR_QCD_MGR'):
@@ -390,20 +409,6 @@ def get_realtime_location(row):
         return "🟡 รอการอนุมัติ", "อยู่ที่แผนก: PCD (รอ PCD Manager ลงนาม)", "MGR"
     elif not row.get('APPR_GM'):
         return "🟡 รอการอนุมัติ", "อยู่ที่ผู้บริหาร: AGM / GM (รอ GM ลงนามอนุมัติ)", "MGR"
-        
-    pending_depts = set()
-    for num in range(1, 20):
-        rev = get_doc_value(row, num, "REVISE").upper()
-        if rev == "YES":
-            close_val = get_doc_value(row, num, "CLOSE")
-            resp_val = get_doc_value(row, num, "RESP")
-            if not close_val or close_val == "-" or not resp_val or resp_val == "-":
-                dept, _ = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
-                pending_depts.add(dept)
-                
-    if pending_depts:
-        depts_str = ", ".join(sorted(list(pending_depts)))
-        return "🔵 กำลังดำเนินการ", f"ติดอยู่ที่แผนก: {depts_str} (รอปิดข้อ YES & ลง Actual Close)", "ENGINEER"
         
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
