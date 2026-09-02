@@ -788,66 +788,75 @@ else:
         elif doc_no:
             st.warning(f"🆕 ไม่พบใบงาน {doc_no} ในระบบ (จะเป็นการสร้างใบงานใหม่)")
 
-        # Section 1: ข้อมูลทั่วไป (PDD กรอก)
-        if "PDD" in selected_dept:
-            st.markdown("#### 1. ข้อมูลทั่วไปของเอกสาร (General Information)")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                customer_name = st.text_input("CUSTOMER NAME", value=doc_data.get("CUSTOMER_NAME", ""), key=f"cust_{doc_no}")
-                part_name = st.text_input("PART NAME", value=doc_data.get("PART_NAME", ""), key=f"partname_{doc_no}")
-                part_no = st.text_input("PART NO.", value=doc_data.get("PART_NO", ""), key=f"partno_{doc_no}")
-            with c2:
-                model = st.text_input("MODEL", value=doc_data.get("MODEL", ""), key=f"model_{doc_no}")
-                master_dwg_no = st.text_input("MASTER DWG NO.", value=doc_data.get("MASTER_DWG_NO", ""), key=f"dwg_{doc_no}")
-                ref_doc_no = st.text_input("REF. DOC NO.", value=doc_data.get("REF_DOC_NO", ""), key=f"refdoc_{doc_no}")
-            with c3:
-                doc_date = st.text_input("DATE (yyyy-mm-dd)", value=doc_data.get("DATE", str(date.today())), key=f"date_{doc_no}")
-                issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name), key=f"issue_{doc_no}")
-                subject_text = st.text_area("SUBJECT / รายละเอียดการเปลี่ยนแปลง", value=doc_data.get("SUBJECT_TEXT", ""), key=f"subj_{doc_no}")
+        # เช็กสิทธิ์ว่าใช่ PDD หรือไม่ (ถ้าไม่ใช่ PDD จะเป็น Read-Only)
+        is_pdd = "PDD" in selected_dept
+        is_disabled = not is_pdd
 
-            # -------------------------------------------------------------
-            # 🖼️ ส่วนอัปโหลดรูปภาพแนบประกอบ (วางต่อจาก SUBJECT)
-            # -------------------------------------------------------------
-            st.markdown("🖼️ **ภาพประกอบการเปลี่ยนแปลง (Image Attachment)**")
-            
-            saved_image_path = doc_data.get("IMAGE_PATH", "")
-            if saved_image_path and os.path.exists(saved_image_path):
-                st.image(saved_image_path, caption=f"รูปภาพแนบเดิมของใบงาน {doc_no}", width=350)
-            
+        # Section 1: ข้อมูลทั่วไป (ทุกแผนกเห็นข้อมูลได้ แต่เฉพาะ PDD เท่านั้นที่แก้ไขได้)
+        st.markdown("#### 1. ข้อมูลทั่วไปของเอกสาร (General Information)")
+        if is_disabled:
+            st.caption("🔒 *แผนกของคุณสามารถรับชมข้อมูลทั่วไปของ PDD ได้อย่างเดียว (Read-Only)*")
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            customer_name = st.text_input("CUSTOMER NAME", value=doc_data.get("CUSTOMER_NAME", ""), key=f"cust_{doc_no}", disabled=is_disabled)
+            part_name = st.text_input("PART NAME", value=doc_data.get("PART_NAME", ""), key=f"partname_{doc_no}", disabled=is_disabled)
+            part_no = st.text_input("PART NO.", value=doc_data.get("PART_NO", ""), key=f"partno_{doc_no}", disabled=is_disabled)
+        with c2:
+            model = st.text_input("MODEL", value=doc_data.get("MODEL", ""), key=f"model_{doc_no}", disabled=is_disabled)
+            master_dwg_no = st.text_input("MASTER DWG NO.", value=doc_data.get("MASTER_DWG_NO", ""), key=f"dwg_{doc_no}", disabled=is_disabled)
+            ref_doc_no = st.text_input("REF. DOC NO.", value=doc_data.get("REF_DOC_NO", ""), key=f"refdoc_{doc_no}", disabled=is_disabled)
+        with c3:
+            doc_date = st.text_input("DATE (yyyy-mm-dd)", value=doc_data.get("DATE", str(date.today())), key=f"date_{doc_no}", disabled=is_disabled)
+            issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name), key=f"issue_{doc_no}", disabled=is_disabled)
+            subject_text = st.text_area("SUBJECT / รายละเอียดการเปลี่ยนแปลง", value=doc_data.get("SUBJECT_TEXT", ""), key=f"subj_{doc_no}", disabled=is_disabled)
+
+        # -------------------------------------------------------------
+        # 🖼️ ส่วนแสดงผล/แนบรูปภาพประกอบ
+        # -------------------------------------------------------------
+        st.markdown("🖼️ **ภาพประกอบการเปลี่ยนแปลง (Image Attachment)**")
+        
+        saved_image_path = doc_data.get("IMAGE_PATH", "")
+        if saved_image_path and os.path.exists(saved_image_path):
+            st.image(saved_image_path, caption=f"รูปภาพแนบประกอบของใบงาน {doc_no}", width=350)
+        elif is_disabled:
+            st.info("ℹ️ ใบงานนี้ไม่มีรูปภาพแนบประกอบ")
+
+        if is_pdd:
             uploaded_image = st.file_uploader(
                 "อัปโหลด/แนบรูปภาพประกอบการเปลี่ยนแปลง (PNG, JPG, JPEG):", 
                 type=["png", "jpg", "jpeg"], 
                 key=f"img_uploader_{doc_no}"
             )
-            
             if uploaded_image is not None:
                 st.image(uploaded_image, caption="รูปภาพที่เลือกใหม่ (รอการบันทึก)", width=300)
 
-            st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-            st.markdown("#### 2. กำหนดการ Effective Date & เอกสารแนบ")
-            ce1, ce2, ce3 = st.columns(3)
-            with ce1:
-                eff_event = st.text_input("EFFECTIVE EVENT", value=doc_data.get("EFF_EVENT", ""), key=f"eff_event_{doc_no}")
-            with ce2:
-                eff_plan = st.text_input("EFFECTIVE PLAN DATE", value=doc_data.get("EFF_PLAN", ""), key=f"eff_plan_{doc_no}")
-            with ce3:
-                eff_actual = st.text_input("EFFECTIVE ACTUAL DATE", value=doc_data.get("EFF_ACTUAL", ""), key=f"eff_act_{doc_no}")
+        st.markdown("#### 2. กำหนดการ Effective Date & เอกสารแนบ")
+        ce1, ce2, ce3 = st.columns(3)
+        with ce1:
+            eff_event = st.text_input("EFFECTIVE EVENT", value=doc_data.get("EFF_EVENT", ""), key=f"eff_event_{doc_no}", disabled=is_disabled)
+        with ce2:
+            eff_plan = st.text_input("EFFECTIVE PLAN DATE", value=doc_data.get("EFF_PLAN", ""), key=f"eff_plan_{doc_no}", disabled=is_disabled)
+        with ce3:
+            eff_actual = st.text_input("EFFECTIVE ACTUAL DATE", value=doc_data.get("EFF_ACTUAL", ""), key=f"eff_act_{doc_no}", disabled=is_disabled)
 
-            ca1, ca2, ca3, ca4 = st.columns(4)
-            with ca1:
-                attach_dwg = st.checkbox("DRAWING", value=(doc_data.get("ATTACH_DRAWING") == "YES"), key=f"at_dwg_{doc_no}")
-            with ca2:
-                attach_eci = st.checkbox("ECI", value=(doc_data.get("ATTACH_ECI") == "YES"), key=f"at_eci_{doc_no}")
-            with ca3:
-                attach_mtg = st.checkbox("MEETING MEMO", value=(doc_data.get("ATTACH_MEETING") == "YES"), key=f"at_mtg_{doc_no}")
-            with ca4:
-                attach_oth = st.checkbox("OTHERS", value=(doc_data.get("ATTACH_OTHERS") == "YES"), key=f"at_oth_{doc_no}")
-                attach_oth_detail = st.text_input("ระบุ OTHERS", value=doc_data.get("ATTACH_OTHERS_DETAIL", ""), key=f"at_oth_dt_{doc_no}")
+        ca1, ca2, ca3, ca4 = st.columns(4)
+        with ca1:
+            attach_dwg = st.checkbox("DRAWING", value=(doc_data.get("ATTACH_DRAWING") == "YES"), key=f"at_dwg_{doc_no}", disabled=is_disabled)
+        with ca2:
+            attach_eci = st.checkbox("ECI", value=(doc_data.get("ATTACH_ECI") == "YES"), key=f"at_eci_{doc_no}", disabled=is_disabled)
+        with ca3:
+            attach_mtg = st.checkbox("MEETING MEMO", value=(doc_data.get("ATTACH_MEETING") == "YES"), key=f"at_mtg_{doc_no}", disabled=is_disabled)
+        with ca4:
+            attach_oth = st.checkbox("OTHERS", value=(doc_data.get("ATTACH_OTHERS") == "YES"), key=f"at_oth_{doc_no}", disabled=is_disabled)
+            attach_oth_detail = st.text_input("ระบุ OTHERS", value=doc_data.get("ATTACH_OTHERS_DETAIL", ""), key=f"at_oth_dt_{doc_no}", disabled=is_disabled)
 
-            judgement_val = st.radio("JUDGEMENT RESULT", ["FEASIBLE", "IMPROBABILITY"], 
-                                     index=0 if doc_data.get("JUDGEMENT") != "IMPROBABILITY" else 1, key=f"judge_{doc_no}")
-
+        judgement_val = st.radio("JUDGEMENT RESULT", ["FEASIBLE", "IMPROBABILITY"], 
+                                 index=0 if doc_data.get("JUDGEMENT") != "IMPROBABILITY" else 1, 
+                                 key=f"judge_{doc_no}", disabled=is_disabled)
+        
         # Section 2: รายการ Checklist 19 ข้อ แบ่งตามแผนก
         st.markdown("---")
         st.subheader("📋 รายการเอกสารที่ต้องแก้ไข ลงนาม และปิดเอกสารตาม Plan (Checklist 19 ข้อ)")
