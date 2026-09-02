@@ -812,16 +812,37 @@ else:
             subject_text = st.text_area("SUBJECT / รายละเอียดการเปลี่ยนแปลง", value=doc_data.get("SUBJECT_TEXT", ""), key=f"subj_{doc_no}", disabled=is_disabled)
 
         # -------------------------------------------------------------
-        # 🖼️ ส่วนแสดงผล/แนบรูปภาพประกอบ
+        # 🖼️ ส่วนแสดงผล/แนบรูปภาพประกอบ (แก้ไขใหม่ให้รองรับทุกแผนก)
         # -------------------------------------------------------------
         st.markdown("🖼️ **ภาพประกอบการเปลี่ยนแปลง (Image Attachment)**")
         
-        saved_image_path = doc_data.get("IMAGE_PATH", "")
-        if saved_image_path and os.path.exists(saved_image_path):
+        # ดึงค่ารูปภาพโดยรองรับทั้งตัวพิมพ์เล็ก-ใหญ่
+        saved_image_path = (
+            doc_data.get("IMAGE_PATH") or 
+            doc_data.get("image_path") or 
+            doc_data.get("IMAGE") or 
+            doc_data.get("image") or 
+            ""
+        )
+
+        # ตรวจสอบว่ามีข้อมูลรูปภาพหรือไม่ (รองรับทั้ง URL, Base64 และ Path ไฟล์)
+        has_image = False
+        if saved_image_path and str(saved_image_path).strip() not in ["", "nan", "None"]:
+            # ถ้าเป็น Path ไฟล์ในเครื่อง ให้เช็กว่ามีไฟล์จริงไหม
+            if os.path.isabs(str(saved_image_path)) or str(saved_image_path).startswith("./") or str(saved_image_path).startswith("uploaded_images/"):
+                if os.path.exists(saved_image_path):
+                    has_image = True
+            else:
+                # ถ้าเป็น URL หรือ Base64 ให้แสดงผลได้เลย
+                has_image = True
+
+        # แสดงผลรูปภาพสำหรับทุกแผนก
+        if has_image:
             st.image(saved_image_path, caption=f"รูปภาพแนบประกอบของใบงาน {doc_no}", width=350)
-        elif is_disabled:
+        else:
             st.info("ℹ️ ใบงานนี้ไม่มีรูปภาพแนบประกอบ")
 
+        # แสดงปุ่มอัปโหลดเฉพาะเมื่อผู้ใช้เป็น PDD
         if is_pdd:
             uploaded_image = st.file_uploader(
                 "อัปโหลด/แนบรูปภาพประกอบการเปลี่ยนแปลง (PNG, JPG, JPEG):", 
