@@ -251,6 +251,22 @@ ITEM_DEPT_MAPPING = {
     18: ("PRO", "WORKING INSTRUCTION."), 19: ("PRO", "TRAINING PRODUCTION.")
 }
 
+def get_doc_value(doc_data, num, field_type):
+    """ฟังก์ชันช่วยดึงค่าข้อมูลแต่ละข้อแบบยืดหยุ่น ป้องกันปัญหา Case-Sensitive และชื่อคอลัมน์ที่ไม่ตรงกัน"""
+    if not doc_data:
+        return ""
+    keys_to_check = [
+        f"DOC_{num}_{field_type.upper()}",
+        f"DOC_{num}_{field_type.lower()}",
+        f"doc_{num}_{field_type.lower()}",
+        f"DOC{num}_{field_type.upper()}",
+        f"DOC{num}_{field_type.lower()}"
+    ]
+    for key in keys_to_check:
+        if key in doc_data and doc_data[key] is not None:
+            return str(doc_data[key]).strip()
+    return ""
+
 def get_document_data(doc_no):
     try:
         ws = get_worksheet()
@@ -330,11 +346,11 @@ def check_yes_items_completed(doc_data):
     has_yes_item = False
     
     for num in range(1, 20):
-        rev_val = str(doc_data.get(f"DOC_{num}_REVISE", doc_data.get(f"doc_{num}_revise", "NO"))).strip().upper()
+        rev_val = get_doc_value(doc_data, num, "REVISE").upper()
         if rev_val == "YES":
             has_yes_item = True
-            resp_val = str(doc_data.get(f"DOC_{num}_RESP", doc_data.get(f"doc_{num}_resp", ""))).strip()
-            close_val = str(doc_data.get(f"DOC_{num}_CLOSE", doc_data.get(f"doc_{num}_close", ""))).strip()
+            resp_val = get_doc_value(doc_data, num, "RESP")
+            close_val = get_doc_value(doc_data, num, "CLOSE")
             dept, title = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
             
             if not resp_val or resp_val == "-":
@@ -371,10 +387,10 @@ def get_realtime_location(row):
         
     pending_depts = set()
     for num in range(1, 20):
-        rev = str(row.get(f"DOC_{num}_REVISE", "NO")).strip().upper()
+        rev = get_doc_value(row, num, "REVISE").upper()
         if rev == "YES":
-            close_val = str(row.get(f"DOC_{num}_CLOSE", "")).strip()
-            resp_val = str(row.get(f"DOC_{num}_RESP", "")).strip()
+            close_val = get_doc_value(row, num, "CLOSE")
+            resp_val = get_doc_value(row, num, "RESP")
             if not close_val or close_val == "-" or not resp_val or resp_val == "-":
                 dept, _ = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
                 pending_depts.add(dept)
@@ -432,7 +448,7 @@ def export_to_printed_form(doc_no):
         start_row = 19
         for i in range(1, 20):
             current_row = start_row + (i - 1)
-            rev_val = doc_data.get(f"DOC_{i}_REVISE", doc_data.get(f"doc_{i}_revise", "NO"))
+            rev_val = get_doc_value(doc_data, i, "REVISE")
             if str(rev_val).upper() == "YES":
                 write_cell(f"K{current_row}", "X")
                 write_cell(f"M{current_row}", "")
@@ -440,9 +456,9 @@ def export_to_printed_form(doc_no):
                 write_cell(f"K{current_row}", "")
                 write_cell(f"M{current_row}", "X")
                 
-            write_cell(f"O{current_row}", doc_data.get(f"DOC_{i}_RESP", doc_data.get(f"doc_{i}_resp", "")))
-            write_cell(f"U{current_row}", doc_data.get(f"DOC_{i}_PLAN", doc_data.get(f"doc_{i}_plan", "")))
-            write_cell(f"Y{current_row}", doc_data.get(f"DOC_{i}_CLOSE", doc_data.get(f"doc_{i}_close", "")))
+            write_cell(f"O{current_row}", get_doc_value(doc_data, i, "RESP"))
+            write_cell(f"U{current_row}", get_doc_value(doc_data, i, "PLAN"))
+            write_cell(f"Y{current_row}", get_doc_value(doc_data, i, "CLOSE"))
             
         write_cell("O41", doc_data.get("APPR_PDD_MGR", ""))
         write_cell("N44", doc_data.get("DATE_PDD_MGR", ""))
@@ -522,12 +538,12 @@ if menu == "📊 Dashboard ติดตามสถานะ Realtime":
                         st.markdown("##### 📝 **รายการที่เลือก YES และสถานะการปิดงาน:**")
                         has_yes = False
                         for num in range(1, 20):
-                            rev = str(doc_row.get(f"DOC_{num}_REVISE", "NO")).upper()
+                            rev = get_doc_value(doc_row, num, "REVISE").upper()
                             if rev == "YES":
                                 has_yes = True
                                 dept, title = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
-                                resp = doc_row.get(f"DOC_{num}_RESP", "")
-                                close_dt = doc_row.get(f"DOC_{num}_CLOSE", "")
+                                resp = get_doc_value(doc_row, num, "RESP")
+                                close_dt = get_doc_value(doc_row, num, "CLOSE")
                                 if resp and close_dt and close_dt != "-":
                                     st.success(f"✅ ข้อ {num} [{dept}]: {title} (ปิดงานเรียบร้อยโดย {resp} เมื่อ {close_dt})")
                                 else:
@@ -766,64 +782,65 @@ else:
             st.markdown("#### 1. ข้อมูลทั่วไปของเอกสาร (General Information)")
             c1, c2, c3 = st.columns(3)
             with c1:
-                customer_name = st.text_input("CUSTOMER NAME", value=doc_data.get("CUSTOMER_NAME", ""))
-                part_name = st.text_input("PART NAME", value=doc_data.get("PART_NAME", ""))
-                part_no = st.text_input("PART NO.", value=doc_data.get("PART_NO", ""))
+                customer_name = st.text_input("CUSTOMER NAME", value=doc_data.get("CUSTOMER_NAME", ""), key=f"cust_{doc_no}")
+                part_name = st.text_input("PART NAME", value=doc_data.get("PART_NAME", ""), key=f"partname_{doc_no}")
+                part_no = st.text_input("PART NO.", value=doc_data.get("PART_NO", ""), key=f"partno_{doc_no}")
             with c2:
-                model = st.text_input("MODEL", value=doc_data.get("MODEL", ""))
-                master_dwg_no = st.text_input("MASTER DWG NO.", value=doc_data.get("MASTER_DWG_NO", ""))
-                ref_doc_no = st.text_input("REF. DOC NO.", value=doc_data.get("REF_DOC_NO", ""))
+                model = st.text_input("MODEL", value=doc_data.get("MODEL", ""), key=f"model_{doc_no}")
+                master_dwg_no = st.text_input("MASTER DWG NO.", value=doc_data.get("MASTER_DWG_NO", ""), key=f"dwg_{doc_no}")
+                ref_doc_no = st.text_input("REF. DOC NO.", value=doc_data.get("REF_DOC_NO", ""), key=f"refdoc_{doc_no}")
             with c3:
-                doc_date = st.text_input("DATE (yyyy-mm-dd)", value=doc_data.get("DATE", str(date.today())))
-                issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name))
-                subject_text = st.text_area("SUBJECT / รายละเอียดการเปลี่ยนแปลง", value=doc_data.get("SUBJECT_TEXT", ""))
+                doc_date = st.text_input("DATE (yyyy-mm-dd)", value=doc_data.get("DATE", str(date.today())), key=f"date_{doc_no}")
+                issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name), key=f"issue_{doc_no}")
+                subject_text = st.text_area("SUBJECT / รายละเอียดการเปลี่ยนแปลง", value=doc_data.get("SUBJECT_TEXT", ""), key=f"subj_{doc_no}")
 
             st.markdown("#### 2. กำหนดการ Effective Date & เอกสารแนบ")
             ce1, ce2, ce3 = st.columns(3)
             with ce1:
-                eff_event = st.text_input("EFFECTIVE EVENT", value=doc_data.get("EFF_EVENT", ""))
+                eff_event = st.text_input("EFFECTIVE EVENT", value=doc_data.get("EFF_EVENT", ""), key=f"eff_event_{doc_no}")
             with ce2:
-                eff_plan = st.text_input("EFFECTIVE PLAN DATE", value=doc_data.get("EFF_PLAN", ""))
+                eff_plan = st.text_input("EFFECTIVE PLAN DATE", value=doc_data.get("EFF_PLAN", ""), key=f"eff_plan_{doc_no}")
             with ce3:
-                eff_actual = st.text_input("EFFECTIVE ACTUAL DATE", value=doc_data.get("EFF_ACTUAL", ""))
+                eff_actual = st.text_input("EFFECTIVE ACTUAL DATE", value=doc_data.get("EFF_ACTUAL", ""), key=f"eff_act_{doc_no}")
 
             ca1, ca2, ca3, ca4 = st.columns(4)
             with ca1:
-                attach_dwg = st.checkbox("DRAWING", value=(doc_data.get("ATTACH_DRAWING") == "YES"))
+                attach_dwg = st.checkbox("DRAWING", value=(doc_data.get("ATTACH_DRAWING") == "YES"), key=f"at_dwg_{doc_no}")
             with ca2:
-                attach_eci = st.checkbox("ECI", value=(doc_data.get("ATTACH_ECI") == "YES"))
+                attach_eci = st.checkbox("ECI", value=(doc_data.get("ATTACH_ECI") == "YES"), key=f"at_eci_{doc_no}")
             with ca3:
-                attach_mtg = st.checkbox("MEETING MEMO", value=(doc_data.get("ATTACH_MEETING") == "YES"))
+                attach_mtg = st.checkbox("MEETING MEMO", value=(doc_data.get("ATTACH_MEETING") == "YES"), key=f"at_mtg_{doc_no}")
             with ca4:
-                attach_oth = st.checkbox("OTHERS", value=(doc_data.get("ATTACH_OTHERS") == "YES"))
-                attach_oth_detail = st.text_input("ระบุ OTHERS", value=doc_data.get("ATTACH_OTHERS_DETAIL", ""))
+                attach_oth = st.checkbox("OTHERS", value=(doc_data.get("ATTACH_OTHERS") == "YES"), key=f"at_oth_{doc_no}")
+                attach_oth_detail = st.text_input("ระบุ OTHERS", value=doc_data.get("ATTACH_OTHERS_DETAIL", ""), key=f"at_oth_dt_{doc_no}")
 
             judgement_val = st.radio("JUDGEMENT RESULT", ["FEASIBLE", "IMPROBABILITY"], 
-                                     index=0 if doc_data.get("JUDGEMENT") != "IMPROBABILITY" else 1)
+                                     index=0 if doc_data.get("JUDGEMENT") != "IMPROBABILITY" else 1, key=f"judge_{doc_no}")
 
         # Section 2: รายการ Checklist 19 ข้อ แบ่งตามแผนก
         st.markdown("---")
         st.subheader("📋 รายการเอกสารที่ต้องแก้ไข ลงนาม และปิดเอกสารตาม Plan (Checklist 19 ข้อ)")
 
-        # ฟังก์ชัน Helper สร้าง UI สำหรับแต่ละข้อ
-        def render_checklist_item(num, title, doc_data):
-            rev_raw = str(doc_data.get(f"DOC_{num}_REVISE", doc_data.get(f"doc_{num}_revise", "NO"))).strip().upper()
-            resp_val = doc_data.get(f"DOC_{num}_RESP", doc_data.get(f"doc_{num}_resp", ""))
-            plan_val = doc_data.get(f"DOC_{num}_PLAN", doc_data.get(f"doc_{num}_plan", ""))
-            close_val = doc_data.get(f"DOC_{num}_CLOSE", doc_data.get(f"doc_{num}_close", ""))
+        # ฟังก์ชัน Helper สร้าง UI สำหรับแต่ละข้อ (ปรับปรุง key ให้ผูกกับ doc_no เพื่ออัปเดตค่าตามจริง)
+        def render_checklist_item(num, title, doc_data, current_doc_no):
+            rev_raw = get_doc_value(doc_data, num, "REVISE").upper()
+            resp_val = get_doc_value(doc_data, num, "RESP")
+            plan_val = get_doc_value(doc_data, num, "PLAN")
+            close_val = get_doc_value(doc_data, num, "CLOSE")
 
             radio_index = 1 if rev_raw == "YES" else 0
+            doc_key_prefix = current_doc_no if current_doc_no else "new"
 
             st.markdown(f"**ข้อ {num}. {title}**")
             c1, c2, c3, c4 = st.columns([1.5, 2.5, 2, 2])
             with c1:
-                rev_input = st.radio(f"แก้ไข? ({num})", options=["NO", "YES"], index=radio_index, key=f"rev_{num}")
+                rev_input = st.radio(f"แก้ไข? ({num})", options=["NO", "YES"], index=radio_index, key=f"rev_{doc_key_prefix}_{num}")
             with c2:
-                resp_input = st.text_input(f"ผู้รับผิดชอบ ({num})", value=resp_val, key=f"resp_{num}")
+                resp_input = st.text_input(f"ผู้รับผิดชอบ ({num})", value=resp_val, key=f"resp_{doc_key_prefix}_{num}")
             with c3:
-                plan_input = st.text_input(f"กำหนดเสร็จ PLAN ({num})", value=plan_val, key=f"plan_{num}")
+                plan_input = st.text_input(f"กำหนดเสร็จ PLAN ({num})", value=plan_val, key=f"plan_{doc_key_prefix}_{num}")
             with c4:
-                close_input = st.text_input(f"วันที่ปิดจริง ACTUAL ({num})", value=close_val, key=f"close_{num}")
+                close_input = st.text_input(f"วันที่ปิดจริง ACTUAL ({num})", value=close_val, key=f"close_{doc_key_prefix}_{num}")
             st.markdown("---")
             return rev_input, resp_input, plan_input, close_input
 
@@ -838,7 +855,7 @@ else:
                 (5, "TEST RESULT."), (6, "FMEA"), (7, "TOOLING No")
             ]
             for num, title in pdd_items:
-                checklist_results[num] = render_checklist_item(num, title, doc_data)
+                checklist_results[num] = render_checklist_item(num, title, doc_data, doc_no)
 
         # ------------------- QC SECTION (ข้อ 8 - 15) -------------------
         elif "QC" in selected_dept:
@@ -850,7 +867,7 @@ else:
                 (14, "PSW UP-DATE., PPAP APPROVAL."), (15, "CHECKING FIXTURE.")
             ]
             for num, title in qc_items:
-                checklist_results[num] = render_checklist_item(num, title, doc_data)
+                checklist_results[num] = render_checklist_item(num, title, doc_data, doc_no)
 
         # ------------------- PCD SECTION (ข้อ 16 - 17) -------------------
         elif "PCD" in selected_dept:
@@ -859,7 +876,7 @@ else:
                 (16, "MATERIAL REQUIREMENT."), (17, "PACKING STANDARD.")
             ]
             for num, title in pcd_items:
-                checklist_results[num] = render_checklist_item(num, title, doc_data)
+                checklist_results[num] = render_checklist_item(num, title, doc_data, doc_no)
 
         # ------------------- PRO SECTION (ข้อ 18 - 19) -------------------
         elif "PRO" in selected_dept:
@@ -868,7 +885,7 @@ else:
                 (18, "WORKING INSTRUCTION."), (19, "TRAINING PRODUCTION.")
             ]
             for num, title in pro_items:
-                checklist_results[num] = render_checklist_item(num, title, doc_data)
+                checklist_results[num] = render_checklist_item(num, title, doc_data, doc_no)
 
         # =============================================================
         # ปุ่มบันทึกข้อมูล (Save Operations)
