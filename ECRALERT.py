@@ -252,7 +252,6 @@ ITEM_DEPT_MAPPING = {
 }
 
 def get_doc_value(doc_data, num, field_type):
-    """ฟังก์ชันช่วยดึงค่าข้อมูลแต่ละข้อแบบยืดหยุ่น ป้องกันปัญหา Case-Sensitive และชื่อคอลัมน์ที่ไม่ตรงกัน"""
     if not doc_data:
         return ""
     keys_to_check = [
@@ -293,7 +292,6 @@ def get_document_data(doc_no):
     return None
 
 def get_all_documents():
-    """ดึงข้อมูลแบบ Realtime สดจาก Google Sheets โดยไม่ผ่าน Cache"""
     try:
         ws = get_worksheet()
         records = ws.get_all_records()
@@ -368,7 +366,6 @@ def check_yes_items_completed(doc_data):
 # 🔍 ฟังก์ชันคำนวณตำแหน่งปัจจุบันของเอกสารแบบ Realtime
 # =============================================================
 def get_realtime_location(row):
-    """วิเคราะห์สถานะและระบุแผนก/บุคคลที่ค้างเอกสารอยู่แบบละเอียด"""
     status = str(row.get('DOC_STATUS', '')).strip().upper()
     
     if status == "APPROVED" or row.get('APPR_GM'):
@@ -794,6 +791,26 @@ else:
                 issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name), key=f"issue_{doc_no}")
                 subject_text = st.text_area("SUBJECT / รายละเอียดการเปลี่ยนแปลง", value=doc_data.get("SUBJECT_TEXT", ""), key=f"subj_{doc_no}")
 
+            # -------------------------------------------------------------
+            # 🖼️ ส่วนอัปโหลดรูปภาพแนบประกอบ (วางต่อจาก SUBJECT)
+            # -------------------------------------------------------------
+            st.markdown("🖼️ **ภาพประกอบการเปลี่ยนแปลง (Image Attachment)**")
+            
+            saved_image_path = doc_data.get("IMAGE_PATH", "")
+            if saved_image_path and os.path.exists(saved_image_path):
+                st.image(saved_image_path, caption=f"รูปภาพแนบเดิมของใบงาน {doc_no}", width=350)
+            
+            uploaded_image = st.file_uploader(
+                "อัปโหลด/แนบรูปภาพประกอบการเปลี่ยนแปลง (PNG, JPG, JPEG):", 
+                type=["png", "jpg", "jpeg"], 
+                key=f"img_uploader_{doc_no}"
+            )
+            
+            if uploaded_image is not None:
+                st.image(uploaded_image, caption="รูปภาพที่เลือกใหม่ (รอการบันทึก)", width=300)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
             st.markdown("#### 2. กำหนดการ Effective Date & เอกสารแนบ")
             ce1, ce2, ce3 = st.columns(3)
             with ce1:
@@ -821,7 +838,6 @@ else:
         st.markdown("---")
         st.subheader("📋 รายการเอกสารที่ต้องแก้ไข ลงนาม และปิดเอกสารตาม Plan (Checklist 19 ข้อ)")
 
-        # ฟังก์ชัน Helper สร้าง UI สำหรับแต่ละข้อ (ปรับปรุง key ให้ผูกกับ doc_no เพื่ออัปเดตค่าตามจริง)
         def render_checklist_item(num, title, doc_data, current_doc_no):
             rev_raw = get_doc_value(doc_data, num, "REVISE").upper()
             resp_val = get_doc_value(doc_data, num, "RESP")
@@ -896,8 +912,19 @@ else:
             else:
                 save_payload = {"DOCUMENT_NO": doc_no}
 
-                # รวมข้อมูล General หากเป็น PDD
+                # จัดการบันทึกไฟล์รูปภาพ (ถ้ามีการแนบไฟล์ใหม่)
                 if "PDD" in selected_dept:
+                    image_path_to_save = doc_data.get("IMAGE_PATH", "")
+                    if uploaded_image is not None:
+                        safe_doc = doc_no.replace("/", "_").replace("\\", "_")
+                        ext = uploaded_image.name.split(".")[-1]
+                        image_filename = f"{safe_doc}_img.{ext}"
+                        full_img_path = os.path.join(UPLOAD_DIR, image_filename)
+                        
+                        with open(full_img_path, "wb") as f:
+                            f.write(uploaded_image.getbuffer())
+                        image_path_to_save = full_img_path
+
                     save_payload.update({
                         "CUSTOMER_NAME": customer_name,
                         "PART_NAME": part_name,
@@ -908,6 +935,7 @@ else:
                         "DATE": str(doc_date),
                         "ISSUE_BY": issue_by,
                         "SUBJECT_TEXT": subject_text,
+                        "IMAGE_PATH": image_path_to_save,
                         "EFF_EVENT": eff_event,
                         "EFF_PLAN": eff_plan,
                         "EFF_ACTUAL": eff_actual,
@@ -930,7 +958,6 @@ else:
                 if save_to_excel(save_payload):
                     st.success(f"✅ บันทึกข้อมูลใบงาน {doc_no} สำเร็จเรียบร้อยแล้ว!")
                     
-                    # ตรวจสอบสถานะว่าทุกข้อ YES ปิดครบหมดแล้วหรือยัง เพื่อส่ง Email แจ้ง PDD MGR
                     updated_doc_data = get_document_data(doc_no)
                     if updated_doc_data:
                         is_all_complete, _ = check_yes_items_completed(updated_doc_data)
