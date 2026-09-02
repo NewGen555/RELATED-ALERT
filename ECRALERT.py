@@ -9,7 +9,17 @@ from datetime import date
 from PIL import Image
 import gspread
 from google.oauth2 import service_account
+import base64
 
+def convert_image_to_base64(uploaded_file):
+    """แปลงไฟล์รูปภาพจาก Streamlit File Uploader เป็น Base64 String"""
+    if uploaded_file is not None:
+        bytes_data = uploaded_file.getvalue()
+        base64_str = base64.b64encode(bytes_data).decode()
+        # เช็กประเภทไฟล์เพื่อใส่ Prefix ให้ถูกต้อง
+        file_type = uploaded_file.type if hasattr(uploaded_file, 'type') else 'image/jpeg'
+        return f"data:{file_type};base64,{base64_str}"
+    return ""
 # =============================================================
 # ตั้งค่าหน้าเว็บ Streamlit
 # =============================================================
