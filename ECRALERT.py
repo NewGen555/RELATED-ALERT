@@ -23,7 +23,7 @@ TEMPLATE_FILE = "template_form.xlsx"
 UPLOAD_DIR = "uploads"
 
 if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+   os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # =============================================================
 # CONNECT GOOGLE SHEETS API
