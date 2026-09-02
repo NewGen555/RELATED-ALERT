@@ -967,17 +967,15 @@ else:
                 save_payload = {"DOCUMENT_NO": doc_no}
 
                 # จัดการบันทึกไฟล์รูปภาพ (ถ้ามีการแนบไฟล์ใหม่)
+               # จัดการบันทึกไฟล์รูปภาพ (แปลงเป็น Base64 สำหรับ Streamlit Cloud)
                 if "PDD" in selected_dept:
                     image_path_to_save = doc_data.get("IMAGE_PATH", "")
                     if uploaded_image is not None:
-                        safe_doc = doc_no.replace("/", "_").replace("\\", "_")
-                        ext = uploaded_image.name.split(".")[-1]
-                        image_filename = f"{safe_doc}_img.{ext}"
-                        full_img_path = os.path.join(UPLOAD_DIR, image_filename)
-                        
-                        with open(full_img_path, "wb") as f:
-                            f.write(uploaded_image.getbuffer())
-                        image_path_to_save = full_img_path
+                        # แปลงไฟล์รูปภาพเป็น Base64 String
+                        image_path_to_save = convert_image_to_base64(uploaded_image)
+                    
+                    # แนบข้อมูลรูปภาพเข้า save_payload เพื่อส่งบันทึกลง Google Sheets
+                    save_payload["IMAGE_PATH"] = image_path_to_save
 
                     save_payload.update({
                         "CUSTOMER_NAME": customer_name,
