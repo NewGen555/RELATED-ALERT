@@ -1,4 +1,5 @@
 import os
+import io  # 👈 เพิ่ม import io ตรงนี้ครับ
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -11,14 +12,31 @@ import gspread
 from google.oauth2 import service_account
 import base64
 
-def convert_image_to_base64(uploaded_file):
-    """แปลงไฟล์รูปภาพจาก Streamlit File Uploader เป็น Base64 String"""
+def convert_image_to_base64(uploaded_file, max_size=(600, 600), quality=60):
+    """ย่อขนาดและบีบอัดรูปภาพก่อนแปลงเป็น Base64 เพื่อไม่ให้เกิน 50,000 ตัวอักษรใน Google Sheets"""
     if uploaded_file is not None:
-        bytes_data = uploaded_file.getvalue()
-        base64_str = base64.b64encode(bytes_data).decode()
-        # เช็กประเภทไฟล์เพื่อใส่ Prefix ให้ถูกต้อง
-        file_type = uploaded_file.type if hasattr(uploaded_file, 'type') else 'image/jpeg'
-        return f"data:{file_type};base64,{base64_str}"
+        try:
+            # 1. เปิดรูปภาพด้วย PIL
+            img = Image.open(uploaded_file)
+            
+            # แปลงโหมดภาพเป็น RGB กรณีรูปเดิมเป็น RGBA (PNG)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            
+            # 2. ย่อขนาดไม่ให้เกิน 600x600 px
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            
+            # 3. บีบอัดไฟล์ลง Memory Buffer
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=quality, optimize=True)
+            bytes_data = buffer.getvalue()
+            
+            # 4. แปลงเป็น Base64 String
+            base64_str = base64.b64encode(bytes_data).decode()
+            return f"data:image/jpeg;base64,{base64_str}"
+        except Exception as e:
+            st.error(f"เกิดข้อผิดพลาดในการแปลงรูปภาพ: {e}")
+            return ""
     return ""
 # =============================================================
 # ตั้งค่าหน้าเว็บ Streamlit
