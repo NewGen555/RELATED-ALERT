@@ -252,8 +252,15 @@ ITEM_DEPT_MAPPING = {
 }
 
 def get_doc_value(doc_data, num, field_type):
-    if not doc_data:
+    # ป้องกัน ValueError กรณี doc_data เป็น Pandas Series หรือ None
+    if doc_data is None:
         return ""
+    
+    if isinstance(doc_data, pd.Series):
+        doc_data = doc_data.to_dict()
+    elif isinstance(doc_data, dict) and not doc_data:
+        return ""
+
     keys_to_check = [
         f"DOC_{num}_{field_type.upper()}",
         f"DOC_{num}_{field_type.lower()}",
@@ -261,9 +268,11 @@ def get_doc_value(doc_data, num, field_type):
         f"DOC{num}_{field_type.upper()}",
         f"DOC{num}_{field_type.lower()}"
     ]
+    
     for key in keys_to_check:
-        if key in doc_data and doc_data[key] is not None:
+        if key in doc_data and doc_data[key] is not None and not pd.isna(doc_data[key]):
             return str(doc_data[key]).strip()
+            
     return ""
 
 def get_document_data(doc_no):
