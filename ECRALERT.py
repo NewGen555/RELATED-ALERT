@@ -432,7 +432,7 @@ def get_realtime_location(row):
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
 # =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุงสัญลักษณ์เป็น ✓ และเว้นว่างถ้าไม่มีข้อมูล)
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุงตามเงื่อนไขใหม่)
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
@@ -454,6 +454,7 @@ def export_to_printed_form(doc_no):
                     return
             target_cell.value = value
         
+        # 1. ข้อมูลทั่วไปของเอกสาร
         write_cell("D3", doc_data.get("PART_NAME", ""))
         write_cell("D4", doc_data.get("PART_NO", ""))
         write_cell("F5", doc_data.get("MASTER_DWG_NO", ""))
@@ -467,38 +468,63 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
-        write_cell("D12", doc_data.get("SUBJECT_TEXT", ""))
+        # 2. แก้ไขจุดที่ 1: ดึงข้อมูล SUBJECT ลงกรอบข้อความ + แทรกรูปภาพฝั่งขวา
+        subject_val = doc_data.get("SUBJECT_TEXT") or doc_data.get("SUBJECT", "")
+        write_cell("D12", subject_val)
         
-        # เปลี่ยน X เป็น ✓ เฉพาะรายการที่มีการเลือกไว้
+        img_path = doc_data.get("IMAGE_PATH") or doc_data.get("IMAGE", "")
+        if img_path and os.path.exists(img_path):
+            try:
+                from openpyxl.drawing.image import Image as OpenpyxlImage
+                
+                img = OpenpyxlImage(img_path)
+                img.width = 250   # ปรับขนาดความกว้างตามความเหมาะสม
+                img.height = 80   # ปรับขนาดความสูงตามความเหมาะสม
+                
+                ws.add_image(img, "R12")
+            except Exception as img_err:
+                print(f"⚠️ ไม่สามารถแทรกรูปภาพได้: {img_err}")
+        
+        # 3. เอกสารแนบ (Attachment)
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
         write_cell("I13", "✓" if doc_data.get("ATTACH_ECI") == "YES" else "")
         write_cell("I14", "✓" if doc_data.get("ATTACH_MEETING") == "YES" else "")
         write_cell("I15", f"✓ ({doc_data.get('ATTACH_OTHERS_DETAIL', '')})" if doc_data.get("ATTACH_OTHERS") == "YES" else "")
 
+        # 4. Feasibility Judgement
         judgement_val = doc_data.get("JUDGEMENT", "")
         write_cell("S13", "✓" if judgement_val == "FEASIBLE" else "")
         write_cell("S14", "✓" if judgement_val == "IMPROBABILITY" else "")
 
+        # 5. แก้ไขจุดที่ 2 & 3: จัดการรายการ Checklist 19 ข้อ
         start_row = 19
         for i in range(1, 20):
             current_row = start_row + (i - 1)
             rev_val = str(get_doc_value(doc_data, i, "REVISE")).upper().strip()
             
-            # ถ้าแผนกยังไม่ได้ลงข้อมูล หรือไม่ได้ระบุ จะปล่อยว่างไว้ทั้งหมด (ไม่ติ๊กถูกใดๆ)
             if rev_val == "YES":
+                # กรณีเลือก YES: ติ๊กช่อง YES และแสดงข้อมูลผู้รับผิดชอบ, วันที่ Plan, วันที่ Close
                 write_cell(f"K{current_row}", "✓")
                 write_cell(f"M{current_row}", "")
+                write_cell(f"O{current_row}", get_doc_value(doc_data, i, "RESP"))
+                write_cell(f"U{current_row}", get_doc_value(doc_data, i, "PLAN"))
+                write_cell(f"Y{current_row}", get_doc_value(doc_data, i, "CLOSE"))
             elif rev_val == "NO":
+                # กรณีเลือก NO: ติ๊กช่อง NO แต่เคลียร์ค่าผู้รับผิดชอบ/วันที่ด้านหลังให้เป็นค่าว่างทั้งหมด
                 write_cell(f"K{current_row}", "")
                 write_cell(f"M{current_row}", "✓")
+                write_cell(f"O{current_row}", "")
+                write_cell(f"U{current_row}", "")
+                write_cell(f"Y{current_row}", "")
             else:
+                # กรณีแผนกยังไม่ได้ลงข้อมูล (- หรือค่าว่าง): เว้นว่างไว้ทั้งหมด ไม่ลงสัญลักษณ์หรือข้อมูลใดๆ
                 write_cell(f"K{current_row}", "")
                 write_cell(f"M{current_row}", "")
+                write_cell(f"O{current_row}", "")
+                write_cell(f"U{current_row}", "")
+                write_cell(f"Y{current_row}", "")
                 
-            write_cell(f"O{current_row}", get_doc_value(doc_data, i, "RESP"))
-            write_cell(f"U{current_row}", get_doc_value(doc_data, i, "PLAN"))
-            write_cell(f"Y{current_row}", get_doc_value(doc_data, i, "CLOSE"))
-            
+        # 6. ลายเซ็นผู้อนุมัติ (Manager Approval)
         write_cell("O41", doc_data.get("APPR_PDD_MGR", ""))
         write_cell("N44", doc_data.get("DATE_PDD_MGR", ""))
         write_cell("Q41", doc_data.get("APPR_QCD_MGR", ""))
