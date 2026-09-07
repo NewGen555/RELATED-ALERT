@@ -969,14 +969,13 @@ else:
                     st.markdown("<br>", unsafe_allow_html=True)
                     submit_btn = st.form_submit_button("💾 บันทึกข้อมูลลงระบบ", type="primary", use_container_width=True)
 
-                            if submit_btn:
-                               if save_to_excel(form_data):
-                                   st.success("✅ บันทึกข้อมูลสำเร็จเรียบร้อยแล้ว!")
+                    if submit_btn:
+                        if save_to_excel(form_data):
+                            st.success("✅ บันทึกข้อมูลสำเร็จเรียบร้อยแล้ว!")
                             
-                                   updated_doc = get_document_data(doc_no)
-                                   is_completed, _ = check_yes_items_completed(updated_doc)
-                                    if is_completed:
-                                      send_all_completed_alert_email(doc_no, customer, part_name)
-                                       st.balloons()
-                                       st.rerun()
-                      
+                            updated_doc = get_document_data(doc_no)
+                            is_completed, _ = check_yes_items_completed(updated_doc)
+                            if is_completed:
+                                send_all_completed_alert_email(doc_no, customer, part_name)
+                                st.balloons()
+                            st.rerun()
