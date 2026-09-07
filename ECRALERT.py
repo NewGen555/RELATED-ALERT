@@ -4,6 +4,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import openpyxl
+from openpyxl.drawing.image import Image as OpenpyxlImage
 import pandas as pd
 import streamlit as st
 from datetime import date
@@ -34,6 +35,16 @@ def convert_image_to_base64(uploaded_file, max_size=(600, 600), quality=60):
             st.error(f"เกิดข้อผิดพลาดในการแปลงรูปภาพ: {e}")
             return ""
     return ""
+
+def base64_to_image(base64_str):
+    """แปลง Base64 String กลับเป็น PIL Image object เพื่อนำไปใส่ใน Excel"""
+    try:
+        if "," in base64_str:
+            base64_str = base64_str.split(",")[1]
+        image_data = base64.b64decode(base64_str)
+        return Image.open(io.BytesIO(image_data))
+    except Exception as e:
+        return None
 
 # =============================================================
 # ตั้งค่าหน้าเว็บ Streamlit
@@ -432,7 +443,7 @@ def get_realtime_location(row):
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
 # =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุงสัญลักษณ์เป็น ✓ และเว้นว่างถ้าไม่มีข้อมูล)
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุง Subject และเพิ่มระบบฝังรูปภาพ R12:AA14)
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
@@ -454,6 +465,7 @@ def export_to_printed_form(doc_no):
                     return
             target_cell.value = value
         
+        # เขียนข้อมูล Header หลัก
         write_cell("D3", doc_data.get("PART_NAME", ""))
         write_cell("D4", doc_data.get("PART_NO", ""))
         write_cell("F5", doc_data.get("MASTER_DWG_NO", ""))
@@ -467,7 +479,23 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
+        # 📌 1. SUBJECT TEXT: กำหนดพื้นที่ D12 ถึง Q14 (บันทึกลง D12)
         write_cell("D12", doc_data.get("SUBJECT_TEXT", ""))
+        
+        # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA14
+        img_base64 = doc_data.get("IMAGE_BASE64", "")
+        if img_base64:
+            pil_img = base64_to_image(img_base64)
+            if pil_img:
+                img_bytes = io.BytesIO()
+                pil_img.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                
+                xl_img = OpenpyxlImage(img_bytes)
+                # ปรับขนาดรูปให้กว้าง/สูงเหมาะสมพอดีกับกรอบ R12:AA14
+                xl_img.width = 300
+                xl_img.height = 100
+                ws.add_image(xl_img, "R12")
         
         # เปลี่ยน X เป็น ✓ เฉพาะรายการที่มีการเลือกไว้
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
@@ -479,12 +507,12 @@ def export_to_printed_form(doc_no):
         write_cell("S13", "✓" if judgement_val == "FEASIBLE" else "")
         write_cell("S14", "✓" if judgement_val == "IMPROBABILITY" else "")
 
+        # Checklist 19 รายการ
         start_row = 19
         for i in range(1, 20):
             current_row = start_row + (i - 1)
             rev_val = str(get_doc_value(doc_data, i, "REVISE")).upper().strip()
             
-            # ถ้าแผนกยังไม่ได้ลงข้อมูล หรือไม่ได้ระบุ จะปล่อยว่างไว้ทั้งหมด (ไม่ติ๊กถูกใดๆ)
             if rev_val == "YES":
                 write_cell(f"K{current_row}", "✓")
                 write_cell(f"M{current_row}", "")
@@ -499,6 +527,7 @@ def export_to_printed_form(doc_no):
             write_cell(f"U{current_row}", get_doc_value(doc_data, i, "PLAN"))
             write_cell(f"Y{current_row}", get_doc_value(doc_data, i, "CLOSE"))
             
+        # Manager Signatures
         write_cell("O41", doc_data.get("APPR_PDD_MGR", ""))
         write_cell("N44", doc_data.get("DATE_PDD_MGR", ""))
         write_cell("Q41", doc_data.get("APPR_QCD_MGR", ""))
@@ -685,271 +714,213 @@ else:
     st.title("KFT - RELATED DOCUMENT CHANGE CONTROL SYSTEM")
 
     if "Print Form" in selected_dept:
-        st.subheader("🖨️ ระบบดึงและพิมพ์ฟอร์มเอกสารควบคุมอัตโนมัติ (Excel Format บริษัท)")
-        print_doc_no = st.text_input("กรอก DOCUMENT NO. ที่ต้องการแปลงข้อมูลออกฟอร์ม (เช่น R001/26) :", key="print_doc_input").strip().upper()
-        
-        if print_doc_no:
-            doc_data = get_document_data(print_doc_no)
-            if doc_data:
-                st.success(f"พบข้อมูลของใบงานหมายเลข {print_doc_no} ในระบบ")
-                st.info(f"📋 สรุปงาน -> ลูกค้า: {doc_data.get('CUSTOMER_NAME', '-')} | พาร์ท: {doc_data.get('PART_NAME', '-')}")
-                
-                output_file, error_msg = export_to_printed_form(print_doc_no)
-                if error_msg:
-                    st.error(error_msg)
-                elif output_file and os.path.exists(output_file):
-                    with open(output_file, "rb") as f:
-                        st.download_button(
-                            label="📥 คลิกตรงนี้เพื่อดาวน์โหลดแบบฟอร์มจริงสำเร็จรูป (.xlsx)",
-                            data=f,
-                            file_name=os.path.basename(output_file),
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_print_user"
-                        )
-            else:
-                st.error("❌ ไม่พบข้อมูลเอกสารเลขที่นี้")
+        st.subheader("🖨️ เจ้าหน้าที่พิมพ์เอกสาร / Download Form")
+        doc_search = st.text_input("พิมพ์เลขที่เอกสาร DOCUMENT NO. เพื่อพิมพ์ฟอร์ม (เช่น R001/26):")
+        if doc_search:
+            render_download_excel_button(doc_search)
     else:
-        st.markdown(f"### 📍 โหมดการทำงาน: **{selected_dept}**")
-        doc_no = st.text_input("📌 กรอก DOCUMENT NO. (เช่น R001/26):", key="main_doc_no").strip().upper()
+        st.subheader(f"📌 การจัดการเอกสารสำหรับ: {selected_dept}")
+        
+        # ส่วนเลือกสร้างเอกสารใหม่ หรือดึงเอกสารเดิมมาแก้ไข
+        action_type = st.radio("เลือกการทำงาน:", ["สร้างเอกสารใหม่ (PDD)", "ค้นหา/แก้ไข เอกสารเดิม"], horizontal=True)
+        
+        doc_data = {}
+        doc_no = ""
 
-        if doc_no:
-            existing_data = get_document_data(doc_no) or {}
-
-            if existing_data:
-                st.info(f"📄 **เอกสารในระบบ:** {doc_no} (Customer: {existing_data.get('CUSTOMER_NAME', '-')}, Part: {existing_data.get('PART_NAME', '-')})")
-                render_download_excel_button(doc_no, "📥 โหลดเอกสาร Excel ฟอร์มจริง ณ ปัจจุบัน (ไม่ต้องรอ Manager อนุมัติ)")
-                st.markdown("---")
-
-            # -------------------------------------------------------------
-            # โหมดผู้จัดการ / GM (MANAGER & GM APPROVAL MODE)
-            # -------------------------------------------------------------
-            if "MGR" in selected_dept or "GM" in selected_dept:
-                st.subheader("🖋️ ส่วนงานพิจารณาอนุมัติเอกสาร (Manager / Management Approval)")
-
-                is_ready, missing = check_yes_items_completed(existing_data)
-
-                if not is_ready:
-                    st.warning("⚠️ **ใบงานนี้ยังไม่พร้อมสำหรับการอนุมัติ** เนื่องจากรายการแก้ไข (YES) ยังลงข้อมูลไม่ครบถ้วน:")
-                    for m in missing:
-                        st.write(f"- {m}")
-                    st.info("💡 สามารถกดดาวน์โหลดไฟล์ Excel ดูร่างเบื้องต้นได้จากปุ่มด้านบนครับ")
+        if action_type == "ค้นหา/แก้ไข เอกสารเดิม":
+            doc_no = st.text_input("กรอก DOCUMENT NO. ที่ต้องการดึงข้อมูล:", key="search_doc_main").strip().upper()
+            if doc_no:
+                doc_data = get_document_data(doc_no)
+                if doc_data:
+                    st.success(f"✅ พบข้อมูลเอกสารเลขที่ {doc_no}")
                 else:
-                    st.success("✅ **ใบงานนี้ปิดข้อ YES และ Actual Close เรียบร้อยแล้ว** พร้อมสำหรับการลงนามอนุมัติ")
+                    st.error("❌ ไม่พบข้อมูลเอกสารในระบบ")
 
-                    appr_col1, appr_col2 = st.columns(2)
+        st.markdown("---")
+        st.subheader("📄 ข้อมูลทั่วไปของเอกสาร (General Information)")
 
-                    with appr_col1:
-                        if "PDD" in selected_dept:
-                            mgr_name = st.text_input("ผู้อนุมัติ (PDD MGR):", value=existing_data.get("APPR_PDD_MGR", st.session_state.user_name))
-                            mgr_date = st.date_input("วันที่อนุมัติ (PDD MGR):", value=date.today())
-                            if st.button("🖊️ PDD MGR ลงนามอนุมัติ"):
-                                update_dict = {
-                                    "DOCUMENT_NO": doc_no,
-                                    "APPR_PDD_MGR": mgr_name,
-                                    "DATE_PDD_MGR": mgr_date.strftime("%Y-%m-%d")
-                                }
-                                if save_to_excel(update_dict):
-                                    st.success("✅ PDD MGR บันทึกการอนุมัติสำเร็จ!")
-                                    send_approval_next_step_email(doc_no, existing_data.get("CUSTOMER_NAME", ""), existing_data.get("PART_NAME", ""), "ผู้จัดการ PDD (PDD MGR)", "QCD_MGR", "ผู้จัดการ QC (QCD MGR)")
-                                    st.rerun()
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            doc_no_val = st.text_input("DOCUMENT NO.", value=doc_data.get("DOCUMENT_NO", doc_no))
+            customer_name = st.text_input("CUSTOMER NAME", value=doc_data.get("CUSTOMER_NAME", ""))
+            part_name = st.text_input("PART NAME", value=doc_data.get("PART_NAME", ""))
+        with c2:
+            part_no = st.text_input("PART NO.", value=doc_data.get("PART_NO", ""))
+            model = st.text_input("MODEL", value=doc_data.get("MODEL", ""))
+            master_dwg_no = st.text_input("MASTER DWG NO.", value=doc_data.get("MASTER_DWG_NO", ""))
+        with c3:
+            issue_date = st.date_input("DATE", value=date.today())
+            ref_doc_no = st.text_input("REF. DOC. NO.", value=doc_data.get("REF_DOC_NO", ""))
+            issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name))
 
-                        elif "QCD" in selected_dept:
-                            mgr_name = st.text_input("ผู้อนุมัติ (QCD MGR):", value=existing_data.get("APPR_QCD_MGR", st.session_state.user_name))
-                            mgr_date = st.date_input("วันที่อนุมัติ (QCD MGR):", value=date.today())
-                            if st.button("🖊️ QCD MGR ลงนามอนุมัติ"):
-                                update_dict = {
-                                    "DOCUMENT_NO": doc_no,
-                                    "APPR_QCD_MGR": mgr_name,
-                                    "DATE_QCD_MGR": mgr_date.strftime("%Y-%m-%d")
-                                }
-                                if save_to_excel(update_dict):
-                                    st.success("✅ QCD MGR บันทึกการอนุมัติสำเร็จ!")
-                                    send_approval_next_step_email(doc_no, existing_data.get("CUSTOMER_NAME", ""), existing_data.get("PART_NAME", ""), "ผู้จัดการ QC (QCD MGR)", "PRD_MGR", "ผู้จัดการ Production (PRD MGR)")
-                                    st.rerun()
+        # =========================================================
+        # 📌 SUBJECT TEXT (พื้นที่ D12:Q14) & IMAGE UPLOAD (พื้นที่ R12:AA14)
+        # =========================================================
+        st.markdown("---")
+        st.subheader("📝 รายละเอียด Subject และ รูปภาพแนบ (Subject & Attached Image)")
+        
+        col_subj, col_img = st.columns([1, 1])
+        
+        with col_subj:
+            st.markdown("**1. SUBJECT (รายละเอียดเรื่องที่เปลี่ยนแปลง - พื้นที่ D12:Q14)**")
+            subject_text = st.text_area(
+                "กรอกเนื้อหา Subject / รายละเอียดการเปลี่ยนแปลง:",
+                value=doc_data.get("SUBJECT_TEXT", ""),
+                height=150,
+                placeholder="ระบุข้อความรายละเอียดการเปลี่ยนแปลงที่นี่..."
+            )
 
-                        elif "PD" in selected_dept or "PRD" in selected_dept:
-                            mgr_name = st.text_input("ผู้อนุมัติ (PRD MGR):", value=existing_data.get("APPR_PRD_MGR", st.session_state.user_name))
-                            mgr_date = st.date_input("วันที่อนุมัติ (PRD MGR):", value=date.today())
-                            if st.button("🖊️ PRD MGR ลงนามอนุมัติ"):
-                                update_dict = {
-                                    "DOCUMENT_NO": doc_no,
-                                    "APPR_PRD_MGR": mgr_name,
-                                    "DATE_PRD_MGR": mgr_date.strftime("%Y-%m-%d")
-                                }
-                                if save_to_excel(update_dict):
-                                    st.success("✅ PRD MGR บันทึกการอนุมัติสำเร็จ!")
-                                    send_approval_next_step_email(doc_no, existing_data.get("CUSTOMER_NAME", ""), existing_data.get("PART_NAME", ""), "ผู้จัดการ Production (PRD MGR)", "PCD_MGR", "ผู้จัดการ PCD (PCD MGR)")
-                                    st.rerun()
+        with col_img:
+            st.markdown("**2. ATTACHED IMAGE (รูปภาพประกอบ - พื้นที่ R12:AA14)**")
+            uploaded_image = st.file_uploader("อัปโหลดรูปภาพแนบ (JPG / PNG):", type=["jpg", "jpeg", "png"])
+            
+            image_base64_str = doc_data.get("IMAGE_BASE64", "")
+            if uploaded_image is not None:
+                image_base64_str = convert_image_to_base64(uploaded_image)
+                st.image(uploaded_image, caption="รูปภาพที่อัปโหลดใหม่", use_container_width=True)
+            elif image_base64_str:
+                st.image(image_base64_str, caption="รูปภาพปัจจุบันในระบบ", use_container_width=True)
 
-                        elif "PCD" in selected_dept:
-                            mgr_name = st.text_input("ผู้อนุมัติ (PCD MGR):", value=existing_data.get("APPR_PCD_MGR", st.session_state.user_name))
-                            mgr_date = st.date_input("วันที่อนุมัติ (PCD MGR):", value=date.today())
-                            if st.button("🖊️ PCD MGR ลงนามอนุมัติ"):
-                                update_dict = {
-                                    "DOCUMENT_NO": doc_no,
-                                    "APPR_PCD_MGR": mgr_name,
-                                    "DATE_PCD_MGR": mgr_date.strftime("%Y-%m-%d")
-                                }
-                                if save_to_excel(update_dict):
-                                    st.success("✅ PCD MGR บันทึกการอนุมัติสำเร็จ!")
-                                    send_approval_next_step_email(doc_no, existing_data.get("CUSTOMER_NAME", ""), existing_data.get("PART_NAME", ""), "ผู้จัดการ PCD (PCD MGR)", "GM", "ผู้บริหาร (AGM / GM)")
-                                    st.rerun()
+        st.markdown("---")
+        st.subheader("📋 รายการตรวจสอบและแผนการดำเนินงาน (Checklist 19 รายการ)")
 
-                        elif "GM" in selected_dept:
-                            gm_name = st.text_input("ผู้อนุมัติขั้นสุดท้าย (AGM / GM):", value=existing_data.get("APPR_GM", st.session_state.user_name))
-                            gm_date = st.date_input("วันที่อนุมัติ (GM):", value=date.today())
-                            if st.button("🎉 GM ลงนามอนุมัติเสร็จสมบูรณ์ (Final Approve)"):
-                                update_dict = {
-                                    "DOCUMENT_NO": doc_no,
-                                    "APPR_GM": gm_name,
-                                    "DATE_GM": gm_date.strftime("%Y-%m-%d"),
-                                    "DOC_STATUS": "APPROVED"
-                                }
-                                if save_to_excel(update_dict):
-                                    st.success("🎉 อนุมัติเอกสารเสร็จสมบูรณ์!")
-                                    send_final_approved_email(doc_no, existing_data.get("CUSTOMER_NAME", ""), existing_data.get("PART_NAME", ""), gm_name)
-                                    st.rerun()
+        # วนลูปสร้าง UI Checklist สำหรับทั้ง 19 รายการ
+        checklist_results = {}
+        for i in range(1, 20):
+            dept, title = ITEM_DEPT_MAPPING[i]
+            st.markdown(f"**ข้อ {i}. [{dept}] {title}**")
+            
+            curr_rev = get_doc_value(doc_data, i, "REVISE").upper()
+            curr_resp = get_doc_value(doc_data, i, "RESP")
+            curr_plan = get_doc_value(doc_data, i, "PLAN")
+            curr_close = get_doc_value(doc_data, i, "CLOSE")
 
-            # -------------------------------------------------------------
-            # โหมดวิศวกรผู้จัดทำ/แก้ไขข้อมูล (ENGINEER FORM INPUT MODE)
-            # -------------------------------------------------------------
+            col_a, col_b, col_c, col_d = st.columns([1.5, 2, 2, 2])
+            with col_a:
+                rev_choice = st.radio(f"แก้ไขข้อ {i}", ["-", "YES", "NO"], index=1 if curr_rev=="YES" else (2 if curr_rev=="NO" else 0), key=f"rev_{i}", horizontal=True)
+            with col_b:
+                resp_choice = st.text_input(f"ผู้รับผิดชอบ ข้อ {i}", value=curr_resp, key=f"resp_{i}")
+            with col_c:
+                plan_choice = st.text_input(f"Plan Date ข้อ {i}", value=curr_plan, key=f"plan_{i}")
+            with col_d:
+                close_choice = st.text_input(f"Actual Close ข้อ {i}", value=curr_close, key=f"close_{i}")
+
+            checklist_results[f"DOC_{i}_REVISE"] = rev_choice
+            checklist_results[f"DOC_{i}_RESP"] = resp_choice
+            checklist_results[f"DOC_{i}_PLAN"] = plan_choice
+            checklist_results[f"DOC_{i}_CLOSE"] = close_choice
+
+        # =========================================================
+        # 🖊️ ส่วนการลงนามอนุมัติ (MANAGER APPROVAL)
+        # =========================================================
+        st.markdown("---")
+        st.subheader("🖊️ การลงนามอนุมัติเอกสาร (Manager Approval)")
+
+        appr_pdd = doc_data.get("APPR_PDD_MGR", "")
+        appr_qcd = doc_data.get("APPR_QCD_MGR", "")
+        appr_prd = doc_data.get("APPR_PRD_MGR", "")
+        appr_pcd = doc_data.get("APPR_PCD_MGR", "")
+        appr_gm  = doc_data.get("APPR_GM", "")
+
+        is_completed, missing_reasons = check_yes_items_completed(doc_data)
+
+        if "MGR" in selected_dept or "GM" in selected_dept:
+            if not is_completed:
+                st.warning("⚠️ ยังไม่สามารถลงนามอนุมัติได้ เนื่องจากรายการ YES ยังปิดงานไม่ครบถ้วน:")
+                for m in missing_reasons:
+                    st.write(f"- {m}")
             else:
-                with st.form("main_form"):
-                    st.subheader("1. ข้อมูลทั่วไปของเอกสาร (General Information)")
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        customer = st.text_input("CUSTOMER NAME", value=existing_data.get("CUSTOMER_NAME", ""))
-                        part_name = st.text_input("PART NAME", value=existing_data.get("PART_NAME", ""))
-                        part_no = st.text_input("PART NO.", value=existing_data.get("PART_NO", ""))
-                    with c2:
-                        model = st.text_input("MODEL", value=existing_data.get("MODEL", ""))
-                        master_dwg = st.text_input("MASTER DRAWING NO.", value=existing_data.get("MASTER_DWG_NO", ""))
-                        ref_doc = st.text_input("REF. DOC NO.", value=existing_data.get("REF_DOC_NO", ""))
-                    with c3:
-                        issue_by = st.text_input("ISSUE BY", value=existing_data.get("ISSUE_BY", st.session_state.user_name))
-                        issue_date = st.date_input("DATE", value=date.today())
+                st.success("✅ ปิดงานข้อ YES ครบถ้วนแล้ว สามารถลงนามอนุมัติได้")
 
-                    st.markdown("---")
-                    st.subheader("2. เหตุผลและรายละเอียดการเปลี่ยนแปลง (Subject / Reason)")
-                    subject_text = st.text_area("SUBJECT / DETAILS", value=existing_data.get("SUBJECT_TEXT", ""), height=100)
+        col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+        with col_m1:
+            st.markdown("**PDD MGR**")
+            st.info(appr_pdd if appr_pdd else "รอลงนาม")
+            if "MGR - PDD" in selected_dept and is_completed and not appr_pdd:
+                if st.button("🖊️ ลงนามอนุมัติ (PDD MGR)"):
+                    appr_pdd = st.session_state.user_name
+                    date_pdd = str(date.today())
+                    save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_PDD_MGR": appr_pdd, "DATE_PDD_MGR": date_pdd})
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PDD", "QCD_MGR", "ผู้จัดการ QC (QCD MGR)")
+                    st.success("ลงนามอนุมัติสำเร็จ!")
+                    st.rerun()
 
-                    uploaded_subject_img = st.file_uploader("📷 อัปโหลดรูปภาพแนบประกอบ Subject / Details", type=["png", "jpg", "jpeg"], key="img_file_subject")
+        with col_m2:
+            st.markdown("**QCD MGR**")
+            st.info(appr_qcd if appr_qcd else "รอลงนาม")
+            if "MGR - QCD" in selected_dept and is_completed and appr_pdd and not appr_qcd:
+                if st.button("🖊️ ลงนามอนุมัติ (QCD MGR)"):
+                    appr_qcd = st.session_state.user_name
+                    date_qcd = str(date.today())
+                    save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_QCD_MGR": appr_qcd, "DATE_QCD_MGR": date_qcd})
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ QC", "PRD_MGR", "ผู้จัดการ Production (PRD MGR)")
+                    st.success("ลงนามอนุมัติสำเร็จ!")
+                    st.rerun()
+
+        with col_m3:
+            st.markdown("**PRD MGR**")
+            st.info(appr_prd if appr_prd else "รอลงนาม")
+            if "MGR - PD" in selected_dept and is_completed and appr_qcd and not appr_prd:
+                if st.button("🖊️ ลงนามอนุมัติ (PRD MGR)"):
+                    appr_prd = st.session_state.user_name
+                    date_prd = str(date.today())
+                    save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_PRD_MGR": appr_prd, "DATE_PRD_MGR": date_prd})
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PRD", "PCD_MGR", "ผู้จัดการ PCD (PCD MGR)")
+                    st.success("ลงนามอนุมัติสำเร็จ!")
+                    st.rerun()
+
+        with col_m4:
+            st.markdown("**PCD MGR**")
+            st.info(appr_pcd if appr_pcd else "รอลงนาม")
+            if "MGR - PCD" in selected_dept and is_completed and appr_prd and not appr_pcd:
+                if st.button("🖊️ ลงนามอนุมัติ (PCD MGR)"):
+                    appr_pcd = st.session_state.user_name
+                    date_pcd = str(date.today())
+                    save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_PCD_MGR": appr_pcd, "DATE_PCD_MGR": date_pcd})
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PCD", "GM", "ผู้บริหาร (AGM / GM)")
+                    st.success("ลงนามอนุมัติสำเร็จ!")
+                    st.rerun()
+
+        with col_m5:
+            st.markdown("**AGM / GM**")
+            st.info(appr_gm if appr_gm else "รอลงนาม")
+            if "AGM / GM" in selected_dept and is_completed and appr_pcd and not appr_gm:
+                if st.button("🖊️ ลงนามอนุมัติขั้นสุดท้าย (GM)"):
+                    appr_gm = st.session_state.user_name
+                    date_gm = str(date.today())
+                    save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_GM": appr_gm, "DATE_GM": date_gm, "DOC_STATUS": "APPROVED"})
+                    send_final_approved_email(doc_no_val, customer_name, part_name, appr_gm)
+                    st.success("อนุมัติเสร็จสมบูรณ์เรียบร้อย!")
+                    st.rerun()
+
+        st.markdown("---")
+        
+        # ปุ่มบันทึกข้อมูลหลัก
+        if st.button("💾 บันทึกข้อมูลลงฐานข้อมูล (Save Data)", type="primary", use_container_width=True):
+            if not doc_no_val:
+                st.error("❌ กรุณาระบุ DOCUMENT NO.")
+            else:
+                save_data = {
+                    "DOCUMENT_NO": doc_no_val,
+                    "CUSTOMER_NAME": customer_name,
+                    "PART_NAME": part_name,
+                    "PART_NO": part_no,
+                    "MODEL": model,
+                    "MASTER_DWG_NO": master_dwg_no,
+                    "DATE": str(issue_date),
+                    "REF_DOC_NO": ref_doc_no,
+                    "ISSUE_BY": issue_by,
+                    "SUBJECT_TEXT": subject_text,
+                    "IMAGE_BASE64": image_base64_str
+                }
+                save_data.update(checklist_results)
+
+                if save_to_excel(save_data):
+                    st.success(f"✅ บันทึกข้อมูลเอกสาร {doc_no_val} เรียบร้อยแล้ว!")
                     
-                    subject_img_base64 = existing_data.get("SUBJECT_IMAGE", "")
-                    if uploaded_subject_img is not None:
-                        subject_img_base64 = convert_image_to_base64(uploaded_subject_img)
-
-                    if subject_img_base64 and str(subject_img_base64).startswith("data:image"):
-                        st.image(subject_img_base64, caption="รูปภาพแนบประกอบ Subject / Details", width=400)
-
-                    st.markdown("---")
-                    st.subheader("3. เอกสารแนบ (Attachment)")
-                    att_col1, att_col2 = st.columns(2)
-                    with att_col1:
-                        att_dwg = st.checkbox("DRAWING / SPEC", value=(existing_data.get("ATTACH_DRAWING") == "YES"))
-                        att_eci = st.checkbox("ECI / ECO", value=(existing_data.get("ATTACH_ECI") == "YES"))
-                    with att_col2:
-                        att_meeting = st.checkbox("MINUTES OF MEETING", value=(existing_data.get("ATTACH_MEETING") == "YES"))
-                        att_others = st.checkbox("OTHERS", value=(existing_data.get("ATTACH_OTHERS") == "YES"))
-                        att_others_detail = st.text_input("ระบุ OTHERS DETAIL:", value=existing_data.get("ATTACH_OTHERS_DETAIL", ""))
-
-                    st.markdown("---")
-                    st.subheader("4. การประเมินความพร้อม (Feasibility Judgement)")
-                    
-                    curr_judgement = existing_data.get("JUDGEMENT", "")
-                    judgement_opts = ["FEASIBLE", "IMPROBABILITY"]
-                    judgement_idx = judgement_opts.index(curr_judgement) if curr_judgement in judgement_opts else 0
-                    
-                    judgement = st.radio(
-                        "JUDGEMENT RESULT:",
-                        judgement_opts,
-                        index=judgement_idx
-                    )
-
-                    st.markdown("---")
-                    st.subheader("5. รายการปรับปรุงแก้ไขและแผนการดำเนินงาน (Checklist 19 Items)")
-
-                    form_data = {
-                        "DOCUMENT_NO": doc_no,
-                        "CUSTOMER_NAME": customer,
-                        "PART_NAME": part_name,
-                        "PART_NO": part_no,
-                        "MODEL": model,
-                        "MASTER_DWG_NO": master_dwg,
-                        "REF_DOC_NO": ref_doc,
-                        "ISSUE_BY": issue_by,
-                        "DATE": issue_date.strftime("%Y-%m-%d"),
-                        "SUBJECT_TEXT": subject_text,
-                        "SUBJECT_IMAGE": subject_img_base64,
-                        "ATTACH_DRAWING": "YES" if att_dwg else "NO",
-                        "ATTACH_ECI": "YES" if att_eci else "NO",
-                        "ATTACH_MEETING": "YES" if att_meeting else "NO",
-                        "ATTACH_OTHERS": "YES" if att_others else "NO",
-                        "ATTACH_OTHERS_DETAIL": att_others_detail,
-                        "JUDGEMENT": judgement
-                    }
-
-                    for i in range(1, 20):
-                        dept_owner, title = ITEM_DEPT_MAPPING.get(i, ("-", "-"))
-                        can_edit = ("PDD" in selected_dept) or (dept_owner in selected_dept)
-
-                        with st.expander(f"ข้อ {i}. [{dept_owner}] {title}", expanded=can_edit):
-                            col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 2])
-
-                            curr_rev = str(get_doc_value(existing_data, i, "REVISE")).upper().strip()
-                            curr_resp = get_doc_value(existing_data, i, "RESP")
-                            curr_plan = get_doc_value(existing_data, i, "PLAN")
-                            curr_close = get_doc_value(existing_data, i, "CLOSE")
-
-                            # ปรับ index เริ่มต้น: ถ้าเป็นค่าว่างให้เลือก "-" (ไม่ติ๊กอะไรในเอกสาร)
-                            opts = ["YES", "NO", "-"]
-                            if curr_rev == "YES":
-                                rev_idx = 0
-                            elif curr_rev == "NO":
-                                rev_idx = 1
-                            else:
-                                rev_idx = 2
-
-                            with col_a:
-                                rev_val = st.radio(
-                                    f"แก้ไข? (#{i})",
-                                    opts,
-                                    index=rev_idx,
-                                    key=f"rev_{i}",
-                                    disabled=not can_edit
-                                )
-                            with col_b:
-                                resp_val = st.text_input(f"ผู้รับผิดชอบ (#{i})", value=curr_resp, key=f"resp_{i}", disabled=not can_edit)
-                            with col_c:
-                                plan_val = st.text_input(f"กำหนดเสร็จ Plan (#{i})", value=curr_plan, key=f"plan_{i}", disabled=not can_edit)
-                            with col_d:
-                                close_val = st.text_input(f"วันปิดงานจริง Actual Close (#{i})", value=curr_close, key=f"close_{i}", disabled=not can_edit)
-
-                            uploaded_img = st.file_uploader(f"📷 อัปโหลดรูปภาพแนบประกอบข้อ {i}", type=["png", "jpg", "jpeg"], key=f"img_file_{i}", disabled=not can_edit)
-                            
-                            img_base64 = get_doc_value(existing_data, i, "IMAGE")
-                            if uploaded_img is not None:
-                                img_base64 = convert_image_to_base64(uploaded_img)
-
-                            if img_base64 and img_base64.startswith("data:image"):
-                                st.image(img_base64, caption=f"รูปภาพแนบประกอบข้อ {i}", width=300)
-
-                            form_data[f"DOC_{i}_REVISE"] = rev_val
-                            form_data[f"DOC_{i}_RESP"] = resp_val
-                            form_data[f"DOC_{i}_PLAN"] = plan_val
-                            form_data[f"DOC_{i}_CLOSE"] = close_val
-                            form_data[f"DOC_{i}_IMAGE"] = img_base64
-
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    submit_btn = st.form_submit_button("💾 บันทึกข้อมูลลงระบบ", type="primary", use_container_width=True)
-
-                    if submit_btn:
-                        if save_to_excel(form_data):
-                            st.success("✅ บันทึกข้อมูลสำเร็จเรียบร้อยแล้ว!")
-                            
-                            updated_doc = get_document_data(doc_no)
-                            is_completed, _ = check_yes_items_completed(updated_doc)
-                            if is_completed:
-                                send_all_completed_alert_email(doc_no, customer, part_name)
-                                st.balloons()
-                            st.rerun()
+                    # ตรวจสอบการส่ง Email แจ้งเตือนเมื่อวิศวกรปิดข้อ YES ครบ
+                    check_data = get_document_data(doc_no_val)
+                    completed, _ = check_yes_items_completed(check_data)
+                    if completed and not check_data.get("APPR_PDD_MGR"):
+                        send_all_completed_alert_email(doc_no_val, customer_name, part_name)
+                        st.info("📧 ส่งอีเมลแจ้งเตือนไปยัง PDD Manager เรียบร้อยแล้ว")
