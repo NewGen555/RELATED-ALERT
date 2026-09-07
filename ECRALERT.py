@@ -813,11 +813,32 @@ def export_to_printed_form(doc_no):
             except Exception as img_err:
                 print(f"⚠️ เกิดข้อผิดพลาดในการโหลดรูปภาพลง Excel: {img_err}")
 
-        # เครื่องหมายถูก Checkbox
-        write_cell("I12", "✓" if get_val("ATTACH_DRAWING") == "YES" else "")
-        write_cell("I13", "✓" if get_val("ATTACH_ECI") == "YES" else "")
-        write_cell("I14", "✓" if get_val("ATTACH_MEETING") == "YES" else "")
-        write_cell("I15", f"✓ ({get_val('ATTACH_OTHERS_DETAIL')})" if get_val("ATTACH_OTHERS") == "YES" else "")
+        # =========================================================
+        # ⚠️ IMPORTANT: I12:I14 อยู่ภายใน merged range D12:Q14
+        # ใน Template จริง ดังนั้นห้ามเขียน I12/I13/I14 เพราะ
+        # write_cell() จะเขียนกลับไปที่ D12 และล้าง SUBJECT ทิ้ง
+        # =========================================================
+        # ไม่เขียน I12/I13/I14 ที่อยู่ในพื้นที่ Subject
+
+        # I15 อยู่นอก merged range D12:Q14 จึงเขียนได้ตามปกติ
+        write_cell(
+            "I15",
+            f"✓ ({get_val('ATTACH_OTHERS_DETAIL')})"
+            if get_val("ATTACH_OTHERS") == "YES" else ""
+        )
+
+        # =========================================================
+        # 🛡️ FINAL SUBJECT PROTECTION
+        # เขียน Subject ซ้ำอีกครั้งหลังจากทุก field ที่อาจกระทบ D12
+        # เพื่อป้องกัน Subject ถูกเขียนทับเป็นค่าว่าง
+        # =========================================================
+        if subject_merge:
+            # D12 เป็น top-left cell ของ merged D12:Q14
+            ws["D12"] = subj_val
+        else:
+            ws["D12"] = subj_val
+
+        print("🛡️ FINAL SUBJECT AFTER OTHER FIELDS:", repr(ws["D12"].value))
 
         judgement_val = get_val("JUDGEMENT")
         write_cell("S13", "✓" if judgement_val == "FEASIBLE" else "")
