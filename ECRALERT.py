@@ -1278,46 +1278,64 @@ else:
             st.markdown("---")
 
         st.subheader("📄 ข้อมูลทั่วไปของเอกสาร (General Information)")
+        st.caption("🔐 ข้อมูลส่วนหลักของเอกสาร (Topic/General Information) เป็นข้อมูลที่ PDD เป็นผู้จัดทำ — แผนกอื่นสามารถดูได้ แต่แก้ไขไม่ได้")
+
+        # ข้อมูลหลักของเอกสารให้ PDD เป็นเจ้าของข้อมูลเท่านั้น
+        # แผนกอื่นต้องเห็นค่าที่ PDD บันทึกไว้ แต่เป็น Read-only
+        pdd_can_edit_main = (user_dept == "PDD" and not is_manager)
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            doc_no_val = st.text_input("DOCUMENT NO.", key="doc_no_field")
-            customer_name = st.text_input("CUSTOMER NAME", key="customer_field")
-            part_name = st.text_input("PART NAME", key="part_name_field")
+            doc_no_val = st.text_input("DOCUMENT NO.", key="doc_no_field", disabled=not pdd_can_edit_main)
+            customer_name = st.text_input("CUSTOMER NAME", key="customer_field", disabled=not pdd_can_edit_main)
+            part_name = st.text_input("PART NAME", key="part_name_field", disabled=not pdd_can_edit_main)
         with c2:
-            part_no = st.text_input("PART NO.", key="part_no_field")
-            model = st.text_input("MODEL", key="model_field")
-            master_dwg_no = st.text_input("MASTER DWG NO.", key="dwg_field")
+            part_no = st.text_input("PART NO.", key="part_no_field", disabled=not pdd_can_edit_main)
+            model = st.text_input("MODEL", key="model_field", disabled=not pdd_can_edit_main)
+            master_dwg_no = st.text_input("MASTER DWG NO.", key="dwg_field", disabled=not pdd_can_edit_main)
         with c3:
             issue_date_raw = doc_data.get("DATE", "")
             try:
                 issue_date_default = date.fromisoformat(str(issue_date_raw)[:10]) if issue_date_raw else date.today()
             except Exception:
                 issue_date_default = date.today()
-            issue_date = st.date_input("DATE", value=issue_date_default, key="issue_date_field")
-            ref_doc_no = st.text_input("REF. DOC. NO.", key="ref_doc_field")
-            issue_by = st.text_input("ISSUE BY", key="issue_by_field")
+            issue_date = st.date_input("DATE", value=issue_date_default, key="issue_date_field", disabled=not pdd_can_edit_main)
+            ref_doc_no = st.text_input("REF. DOC. NO.", key="ref_doc_field", disabled=not pdd_can_edit_main)
+            issue_by = st.text_input("ISSUE BY", key="issue_by_field", disabled=not pdd_can_edit_main)
 
         # =========================================================
-        # 📌 SUBJECT TEXT (พื้นที่ D12:Q14) & IMAGE UPLOAD (พื้นที่ R12:AA14)
+        # 📌 SUBJECT / TOPIC (พื้นที่ D12:Q14) & IMAGE (พื้นที่ R12:AA14)
         # =========================================================
         st.markdown("---")
-        st.subheader("📝 รายละเอียด Subject และ รูปภาพแนบ (Subject & Attached Image)")
-        
+        st.subheader("📝 Topic / Subject และ รูปภาพแนบ (Subject & Attached Image)")
+        if pdd_can_edit_main:
+            st.info("✏️ PDD สามารถแก้ไข Topic / Subject และรูปภาพแนบได้")
+        else:
+            st.info("👁️ แสดงข้อมูล Topic / Subject ที่ PDD บันทึกไว้ — แผนกนี้ไม่สามารถแก้ไขได้")
+
         col_subj, col_img = st.columns([1, 1])
         
         with col_subj:
-            st.markdown("**1. SUBJECT (รายละเอียดเรื่องที่เปลี่ยนแปลง - พื้นที่ D12:Q14)**")
+            st.markdown("**1. TOPIC / SUBJECT (รายละเอียดเรื่องที่เปลี่ยนแปลง - พื้นที่ D12:Q14)**")
             subject_text = st.text_area(
-                "กรอกเนื้อหา Subject / รายละเอียดการเปลี่ยนแปลง:",
+                "Topic / Subject:",
                 height=150,
                 placeholder="ระบุข้อความรายละเอียดการเปลี่ยนแปลงที่นี่...",
-                key="subject_field"
+                key="subject_field",
+                disabled=not pdd_can_edit_main
             )
 
         with col_img:
             st.markdown("**2. ATTACHED IMAGE (รูปภาพประกอบ - พื้นที่ R12:AA14)**")
-            uploaded_image = st.file_uploader("อัปโหลดรูปภาพแนบ (JPG / PNG):", type=["jpg", "jpeg", "png"], key="uploaded_image_widget")
+            uploaded_image = None
+            if pdd_can_edit_main:
+                uploaded_image = st.file_uploader(
+                    "อัปโหลดรูปภาพแนบ (JPG / PNG):",
+                    type=["jpg", "jpeg", "png"],
+                    key="uploaded_image_widget"
+                )
+            else:
+                st.caption("🔒 รูปภาพแนบเป็นข้อมูลจาก PDD และไม่สามารถเปลี่ยนแปลงได้จากแผนกนี้")
             
             image_base64_str = (
                 doc_data.get("IMAGE_BASE64", "")
@@ -1483,20 +1501,23 @@ else:
                     st.error("❌ กรุณาระบุ DOCUMENT NO.")
                 else:
                     # ค้นหาบรรทัด save_data ในส่วนการกดปุ่มบันทึก แล้วปรับให้ส่งทั้ง SUBJECT_TEXT และ SUBJECT
-                    save_data = {
-                        "DOCUMENT_NO": doc_no_val,
-                        "CUSTOMER_NAME": customer_name,
-                        "PART_NAME": part_name,
-                        "PART_NO": part_no,
-                        "MODEL": model,
-                        "MASTER_DWG_NO": master_dwg_no,
-                        "DATE": str(issue_date),
-                        "REF_DOC_NO": ref_doc_no,
-                        "ISSUE_BY": issue_by,
-                        "SUBJECT_TEXT": str(subject_text).strip(),
-                        "SUBJECT": str(subject_text).strip(),
-                        "IMAGE_BASE64": image_base64_str
-                     }
+                    # PDD เป็นเจ้าของข้อมูล Topic / General Information
+                    # แผนกอื่นส่งเฉพาะ checklist ของตนเอง เพื่อป้องกันการเขียนทับข้อมูลหลักของ PDD
+                    save_data = {"DOCUMENT_NO": doc_no_val}
+                    if pdd_can_edit_main:
+                        save_data.update({
+                            "CUSTOMER_NAME": customer_name,
+                            "PART_NAME": part_name,
+                            "PART_NO": part_no,
+                            "MODEL": model,
+                            "MASTER_DWG_NO": master_dwg_no,
+                            "DATE": str(issue_date),
+                            "REF_DOC_NO": ref_doc_no,
+                            "ISSUE_BY": issue_by,
+                            "SUBJECT_TEXT": str(subject_text).strip(),
+                            "SUBJECT": str(subject_text).strip(),
+                            "IMAGE_BASE64": image_base64_str
+                        })
                     save_data.update(checklist_results)
 
                     if save_to_excel(save_data):
