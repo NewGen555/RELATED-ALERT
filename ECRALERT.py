@@ -451,11 +451,15 @@ def get_realtime_location(row):
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
-        return None, f"❌ ไม่พบไฟล์แบบฟอร์มต้นฉบับ '{TEMPLATE_FILE}' ในโฟลเดอร์โปรเจกต์"
+        return None, f"❌ ไม่พบไฟล์แบบฟอร์มต้นฉบับ..."
         
     raw_data = get_document_data(doc_no)
+    
+    # 🔍 เพิ่มบรรทัดนี้เพื่อดูว่า get_document_data ส่งอะไรออกมากันแน่
+    print("🔍 DEBUG RAW_DATA:", raw_data)
+    
     if not raw_data:
-        return None, "❌ ไม่พบข้อมูลของเอกสารเลขที่นี้ในฐานข้อมูล"
+        return None, "❌ ไม่พบข้อมูล..."
         
     # แปลงโครงสร้างข้อมูลให้เป็น Dict เพื่อให้ค้นหาตามชื่อหัวคอลัมน์ได้ง่าย
     doc_data = {}
