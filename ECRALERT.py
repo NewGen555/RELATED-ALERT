@@ -447,22 +447,47 @@ def get_realtime_location(row):
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
 # =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ฉบับเจาะจงคีย์ SUBJECT ชัดเจน)
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ฉบับสมบูรณ์ รองรับทั้ง Dict และ List)
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
         return None, f"❌ ไม่พบไฟล์แบบฟอร์มต้นฉบับ '{TEMPLATE_FILE}' ในโฟลเดอร์โปรเจกต์"
         
-    doc_data = get_document_data(doc_no)
-    if not doc_data:
+    raw_data = get_document_data(doc_no)
+    if not raw_data:
         return None, "❌ ไม่พบข้อมูลของเอกสารเลขที่นี้ในฐานข้อมูล"
         
-    # 🔍 พิมพ์ข้อมูลทั้งหมดออกมาดูใน Terminal (เพื่อเช็กว่ามีคีย์ชื่ออะไรบ้าง)
-    print("--- DEBUG DOC_DATA ---")
-    for k, v in doc_data.items():
-        if v and str(v).strip() and str(v).strip().lower() != "none":
-            print(f"Key: '{k}' => Value: {str(v)[:50]}")
-    print("----------------------")
+    # แปลงข้อมูลให้อยู่ในรูปแบบที่ปลอดภัย ไม่ว่าจะส่งมาเป็น Dict หรือ List
+    doc_data = {}
+    if isinstance(raw_data, dict):
+        doc_data = raw_data
+    elif isinstance(raw_data, (list, tuple)):
+        # สมมติฐานกรณีเป็น List: แปลงเป็น Dict จำลอง หรือดึงตาม index 
+        # (คุณสามารถปรับ mapping ตามลำดับคอลัมน์จริงใน Google Sheets ของคุณได้ที่นี่)
+        print(f"ℹ️ พบข้อมูลแบบ List ขนาด {len(raw_data)} รายการ กำลังแมปข้อมูล...")
+        for idx, val in enumerate(raw_data):
+            doc_data[f"COL_{idx}"] = val
+        # เผื่อช่อง Subject อยู่ในตำแหน่ง Index ทั่วไป (เช่น ช่องที่ 2, 3 หรือ 4)
+        # ให้ดึงค่าช่องที่ยาวที่สุดหรือช่องข้อความมาใส่ Subject สำรองไว้ก่อน
+        potential_subjs = [str(v) for v in raw_data if v and len(str(v)) > 3 and not str(v).startswith("R0")]
+        if potential_subjs:
+            doc_data["SUBJECT"] = potential_subjs[0]
+
+    # ฟังก์ชันช่วยดึงค่าแบบปลอดภัย (รองรับทั้งตัวพิมพ์เล็ก/ใหญ่และหลายชื่อคีย์)
+    def get_val(*keys):
+        for k in keys:
+            # 1. เช็กตรงๆ
+            if k in doc_data and doc_data[k] is not None:
+                return str(doc_data[k])
+            # 2. เช็กแบบไม่สนตัวพิมพ์เล็กใหญ่ / Underscore
+            for actual_k in doc_data.keys():
+                clean_actual = str(actual_k).upper().replace("_", "").replace(" ", "")
+                clean_target = str(k).upper().replace("_", "").replace(" ", "")
+                if clean_actual == clean_target:
+                    val = doc_data[actual_k]
+                    if val is not None:
+                        return str(val)
+        return ""
 
     try:
         wb = openpyxl.load_workbook(TEMPLATE_FILE)
@@ -478,41 +503,25 @@ def export_to_printed_form(doc_no):
             target_cell.value = value
             return target_cell
 
-        # เขียนข้อมูล Header หลัก
-        write_cell("D3", doc_data.get("PART_NAME", ""))
-        write_cell("D4", doc_data.get("PART_NO", ""))
-        write_cell("F5", doc_data.get("MASTER_DWG_NO", ""))
-        write_cell("P3", doc_data.get("MODEL", ""))
-        write_cell("X3", doc_data.get("DATE", ""))
-        write_cell("X1", doc_data.get("DOCUMENT_NO", ""))
-        write_cell("H8", doc_data.get("REF_DOC_NO", ""))
-        write_cell("X4", doc_data.get("ISSUE_BY", ""))
+        # 📌 เขียนข้อมูล Header หลัก
+        write_cell("D3", get_val("PART_NAME", "PARTNAME", "COL_1"))
+        write_cell("D4", get_val("PART_NO", "PARTNO", "COL_2"))
+        write_cell("F5", get_val("MASTER_DWG_NO", "DWG", "COL_3"))
+        write_cell("P3", get_val("MODEL", "COL_4"))
+        write_cell("X3", get_val("DATE", "COL_5"))
+        write_cell("X1", get_val("DOCUMENT_NO", "DOC_NO", "DOCNO"))
+        write_cell("H8", get_val("REF_DOC_NO", "REF"))
+        write_cell("X4", get_val("ISSUE_BY", "USER"))
         
-        write_cell("W7", doc_data.get("EFF_EVENT", ""))
-        write_cell("W8", doc_data.get("EFF_PLAN", ""))
-        write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
+        write_cell("W7", get_val("EFF_EVENT", "EVENT"))
+        write_cell("W8", get_val("EFF_PLAN", "PLAN"))
+        write_cell("W9", get_val("EFF_ACTUAL", "ACTUAL"))
 
-        # 📌 1. ดึงค่า SUBJECT (เช็กเจาะจงคีย์ยอดฮิตทั้งหมดทันที)
-        subj_val = (
-            doc_data.get("SUBJECT") or 
-            doc_data.get("Subject") or 
-            doc_data.get("subject") or 
-            doc_data.get("DETAILS") or 
-            doc_data.get("DETAIL") or ""
-        )
-        
-        # ถ้ายังไม่เจอ ให้ลองวนลูปหาคำใกล้เคียงอีกรอบ
-        if not str(subj_val).strip():
-            for k, v in doc_data.items():
-                clean_k = str(k).upper().replace("_", "").replace(" ", "")
-                if "SUBJECT" in clean_k or "DETAIL" in clean_k:
-                    if v and str(v).strip() and str(v).strip().lower() != "none":
-                        subj_val = str(v).strip()
-                        break
+        # 📌 1. ดึงค่า SUBJECT 
+        subj_val = get_val("SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION")
+        print(f"📌 ค่า Subject ที่ดึงมาแสดงผล: '{subj_val}'")
 
-        print(f"📌 ค่า Subject ที่ดึงมาได้: '{subj_val}'")
-
-        # เขียนค่าลง D12 โดยตรง (ยกเลิกการผสานชั่วคราวเพื่อให้เขียนได้แน่ๆ)
+        # แก้ปัญหา Merged Cell D12:Q15
         merged_to_reopen = None
         for rng in list(ws.merged_cells.ranges):
             if "D12" in rng:
@@ -520,7 +529,7 @@ def export_to_printed_form(doc_no):
                 ws.unmerge_cells(str(rng))
                 break
 
-        ws["D12"].value = str(subj_val)
+        ws["D12"].value = subj_val
 
         if merged_to_reopen:
             ws.merge_cells(merged_to_reopen)
@@ -534,14 +543,10 @@ def export_to_printed_form(doc_no):
         )
 
         # 📌 2. ดึงและฝังรูปภาพ (ATTACHED IMAGE ในพื้นที่ R12:AA15)
-        img_raw = (
-            doc_data.get("IMAGE_BASE64") or 
-            doc_data.get("IMAGE") or 
-            doc_data.get("IMAGE_DATA") or ""
-        )
-        if img_raw and str(img_raw).strip():
+        img_raw = get_val("IMAGE_BASE64", "IMAGE", "IMAGE_DATA", "IMG")
+        if img_raw and img_raw.strip():
             try:
-                img_str = str(img_raw).strip()
+                img_str = img_raw.strip()
                 if "," in img_str:
                     img_str = img_str.split(",")[1]
 
@@ -560,12 +565,12 @@ def export_to_printed_form(doc_no):
                 print(f"⚠️ เกิดข้อผิดพลาดในการโหลดรูปภาพลง Excel: {img_err}")
 
         # เครื่องหมายถูก Checkbox
-        write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
-        write_cell("I13", "✓" if doc_data.get("ATTACH_ECI") == "YES" else "")
-        write_cell("I14", "✓" if doc_data.get("ATTACH_MEETING") == "YES" else "")
-        write_cell("I15", f"✓ ({doc_data.get('ATTACH_OTHERS_DETAIL', '')})" if doc_data.get("ATTACH_OTHERS") == "YES" else "")
+        write_cell("I12", "✓" if get_val("ATTACH_DRAWING") == "YES" else "")
+        write_cell("I13", "✓" if get_val("ATTACH_ECI") == "YES" else "")
+        write_cell("I14", "✓" if get_val("ATTACH_MEETING") == "YES" else "")
+        write_cell("I15", f"✓ ({get_val('ATTACH_OTHERS_DETAIL')})" if get_val("ATTACH_OTHERS") == "YES" else "")
 
-        judgement_val = doc_data.get("JUDGEMENT", "")
+        judgement_val = get_val("JUDGEMENT")
         write_cell("S13", "✓" if judgement_val == "FEASIBLE" else "")
         write_cell("S14", "✓" if judgement_val == "IMPROBABILITY" else "")
 
@@ -590,16 +595,16 @@ def export_to_printed_form(doc_no):
             write_cell(f"Y{current_row}", get_doc_value(doc_data, i, "CLOSE"))
             
         # Manager Signatures
-        write_cell("O41", doc_data.get("APPR_PDD_MGR", ""))
-        write_cell("N44", doc_data.get("DATE_PDD_MGR", ""))
-        write_cell("Q41", doc_data.get("APPR_QCD_MGR", ""))
-        write_cell("Q44", doc_data.get("DATE_QCD_MGR", ""))
-        write_cell("S41", doc_data.get("APPR_PCD_MGR", ""))
-        write_cell("T44", doc_data.get("DATE_PCD_MGR", ""))
-        write_cell("V41", doc_data.get("APPR_PRD_MGR", ""))
-        write_cell("W44", doc_data.get("DATE_PRD_MGR", ""))
-        write_cell("Y41", doc_data.get("APPR_GM", ""))
-        write_cell("Z44", doc_data.get("DATE_GM", ""))
+        write_cell("O41", get_val("APPR_PDD_MGR"))
+        write_cell("N44", get_val("DATE_PDD_MGR"))
+        write_cell("Q41", get_val("APPR_QCD_MGR"))
+        write_cell("Q44", get_val("DATE_QCD_MGR"))
+        write_cell("S41", get_val("APPR_PCD_MGR"))
+        write_cell("T44", get_val("DATE_PCD_MGR"))
+        write_cell("V41", get_val("APPR_PRD_MGR"))
+        write_cell("W44", get_val("DATE_PRD_MGR"))
+        write_cell("Y41", get_val("APPR_GM"))
+        write_cell("Z44", get_val("DATE_GM"))
         
         safe_doc_no = doc_no.replace("/", "_").replace("\\", "_")
         output_filename = f"Change_Control_Sheet_{safe_doc_no}.xlsx"
