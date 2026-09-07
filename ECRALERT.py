@@ -459,11 +459,14 @@ def export_to_printed_form(doc_no):
         
         def write_cell(coordinate, value):
             target_cell = ws[coordinate]
-            for merged_range in list(ws.merged_cells.ranges):
+            # ตรวจสอบว่าเป็น Merged Cell หรือไม่ หากใช่ให้เขียนลง Top-Left Cell
+            for merged_range in ws.merged_cells.ranges:
                 if target_cell.coordinate in merged_range:
-                    ws.cell(row=merged_range.min_row, column=merged_range.min_col, value=value)
-                    return
+                    top_left = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
+                    top_left.value = value
+                    return top_left
             target_cell.value = value
+            return target_cell
         
         # เขียนข้อมูล Header หลัก
         write_cell("D3", doc_data.get("PART_NAME", ""))
@@ -479,11 +482,16 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
-        # 📌 1. FIX SUBJECT TEXT: ดึงค่าจากทั้ง SUBJECT_TEXT และ SUBJECT พร้อมตั้งค่า Wrap Text
-        subj_val = doc_data.get("SUBJECT_TEXT") or doc_data.get("SUBJECT") or ""
-        target_subj_cell = ws["D12"]
-        write_cell("D12", subj_val)
-        target_subj_cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
+        # 📌 1. FIX SUBJECT TEXT (ดึงทุก Key ที่เป็นไปได้ + บังคับเขียนลง Merged Cell D12)
+        subj_val = (
+            doc_data.get("SUBJECT_TEXT") or 
+            doc_data.get("SUBJECT") or 
+            doc_data.get("SUBJECT_DETAIL") or ""
+        )
+        
+        # บังคับเขียนค่าตรงลง Top-Left ของพื้นที่ D12:Q14
+        subj_cell = write_cell("D12", str(subj_val))
+        subj_cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
         
         # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA14
         img_base64 = doc_data.get("IMAGE_BASE64", "")
@@ -499,7 +507,7 @@ def export_to_printed_form(doc_no):
                 xl_img.height = 100
                 ws.add_image(xl_img, "R12")
         
-        # เครื่องหมายถูก
+        # เครื่องหมายถูก Checkbox
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
         write_cell("I13", "✓" if doc_data.get("ATTACH_ECI") == "YES" else "")
         write_cell("I14", "✓" if doc_data.get("ATTACH_MEETING") == "YES" else "")
