@@ -22,24 +22,49 @@ from google.oauth2 import service_account
 # 🖼️ BASE64 IMAGE CONVERSION & RESIZE
 # =============================================================
 def convert_image_to_base64(uploaded_file, max_size=(600, 600), quality=60):
-    """ย่อขนาดและบีบอัดรูปภาพก่อนแปลงเป็น Base64 เพื่อไม่ให้เกิน 50,000 ตัวอักษรใน Google Sheets"""
-    if uploaded_file is not None:
-        try:
-            img = Image.open(uploaded_file)
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            
+    """
+    ย่อ/บีบอัดรูปภาพให้เหมาะกับ Google Sheets แล้วเก็บเป็น Data URL
+    โดยพยายามให้ขนาดข้อความต่ำกว่า ~40,000 ตัวอักษร เพื่อไม่ชน cell limit
+    """
+    if uploaded_file is None:
+        return ""
+
+    try:
+        original = Image.open(uploaded_file)
+        if original.mode in ("RGBA", "P"):
+            original = original.convert("RGB")
+
+        # ลองหลายระดับจากคุณภาพสูง -> ต่ำ จนกว่าจะเล็กพอ
+        attempts = [
+            ((600, 600), 60),
+            ((550, 550), 50),
+            ((500, 500), 45),
+            ((450, 450), 40),
+            ((400, 400), 35),
+            ((350, 350), 30),
+        ]
+
+        for size, q in attempts:
+            img = original.copy()
+            img.thumbnail(size, Image.Resampling.LANCZOS)
+
             buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=quality, optimize=True)
-            bytes_data = buffer.getvalue()
-            
-            base64_str = base64.b64encode(bytes_data).decode()
-            return f"data:image/jpeg;base64,{base64_str}"
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาดในการแปลงรูปภาพ: {e}")
-            return ""
-    return ""
+            img.save(buffer, format="JPEG", quality=q, optimize=True)
+            encoded = base64.b64encode(buffer.getvalue()).decode()
+            data_url = f"data:image/jpeg;base64,{encoded}"
+
+            if len(data_url) <= 40000:
+                print("🖼️ IMAGE COMPRESSED:", len(data_url), "chars", "size=", size, "quality=", q)
+                return data_url
+
+        # ถ้ายังใหญ่ ให้ใช้ตัวเลือกสุดท้าย
+        print("⚠️ IMAGE still large after compression:", len(data_url), "chars")
+        return data_url
+
+    except Exception as e:
+        st.error(f"เกิดข้อผิดพลาดในการแปลงรูปภาพ: {e}")
+        print(f"❌ IMAGE CONVERSION ERROR: {type(e).__name__}: {e}")
+        return ""
 
 def base64_to_image(base64_str):
     """แปลง Base64 String กลับเป็น PIL Image object เพื่อนำไปใส่ใน Excel"""
@@ -512,6 +537,26 @@ def save_to_excel(data_dict):
             clean_key = normalize_data_key(key)
             normalized_data[clean_key] = "" if value is None else str(value).strip()
 
+        # =====================================================
+        # 🖼️ IMAGE FIELD ALIAS
+        # Google Sheet จริงใช้ Header = SUBJECT_IMAGE_PATH
+        # แต่ Form ใช้ key = IMAGE_BASE64
+        # ต้อง map ให้ตรงกัน ไม่เช่นนั้นรูปจะไม่ถูกบันทึกลง Sheet
+        # =====================================================
+        image_value = normalized_data.get("IMAGE_BASE64", "")
+        if not image_value:
+            image_value = normalized_data.get("SUBJECT_IMAGE_PATH", "")
+
+        if image_value:
+            if "SUBJECT_IMAGE_PATH" in headers:
+                normalized_data["SUBJECT_IMAGE_PATH"] = image_value
+            if "IMAGE_BASE64" in headers:
+                normalized_data["IMAGE_BASE64"] = image_value
+
+            print("🖼️ IMAGE TO SAVE: found", len(image_value), "chars")
+        else:
+            print("🖼️ IMAGE TO SAVE: EMPTY")
+
         doc_no = normalized_data.get("DOCUMENT_NO", "").strip().upper()
         if not doc_no:
             st.error("❌ ไม่มี DOCUMENT_NO")
@@ -545,11 +590,23 @@ def save_to_excel(data_dict):
 
             new_row[13] = normalized_data.get("SUBJECT_TEXT", "")
 
+            # IMAGE: เขียนลง Header จริงของ Sheet
+            if "SUBJECT_IMAGE_PATH" in headers:
+                image_col = headers.index("SUBJECT_IMAGE_PATH")
+                new_row[image_col] = normalized_data.get("SUBJECT_IMAGE_PATH", "")
+            elif "IMAGE_BASE64" in headers:
+                image_col = headers.index("IMAGE_BASE64")
+                new_row[image_col] = normalized_data.get("IMAGE_BASE64", "")
+
             ws.append_row(new_row)
 
             print("✅ APPEND new Google Sheet row")
             print("DOCUMENT_NO SAVED :", repr(doc_no))
             print("SUBJECT_TEXT SAVED:", repr(new_row[13]))
+            if "SUBJECT_IMAGE_PATH" in headers:
+                print("IMAGE SAVED COLUMN : SUBJECT_IMAGE_PATH", len(new_row[headers.index("SUBJECT_IMAGE_PATH")]))
+            elif "IMAGE_BASE64" in headers:
+                print("IMAGE SAVED COLUMN : IMAGE_BASE64", len(new_row[headers.index("IMAGE_BASE64")]))
             return True
 
         # =====================================================
@@ -582,6 +639,30 @@ def save_to_excel(data_dict):
                 value=subject_value
             )
         )
+
+        # 🖼️ IMAGE: บังคับ update ลง Column SUBJECT_IMAGE_PATH
+        # เพราะ Form ใช้ IMAGE_BASE64 แต่ Google Sheet ใช้ SUBJECT_IMAGE_PATH
+        if image_value:
+            if "SUBJECT_IMAGE_PATH" in headers:
+                image_col = headers.index("SUBJECT_IMAGE_PATH") + 1
+                cell_updates.append(
+                    gspread.Cell(
+                        row=row_index,
+                        col=image_col,
+                        value=image_value
+                    )
+                )
+                print("🖼️ IMAGE UPDATE -> SUBJECT_IMAGE_PATH", len(image_value), "chars")
+            elif "IMAGE_BASE64" in headers:
+                image_col = headers.index("IMAGE_BASE64") + 1
+                cell_updates.append(
+                    gspread.Cell(
+                        row=row_index,
+                        col=image_col,
+                        value=image_value
+                    )
+                )
+                print("🖼️ IMAGE UPDATE -> IMAGE_BASE64", len(image_value), "chars")
 
         if cell_updates:
             ws.update_cells(cell_updates)
@@ -931,6 +1012,17 @@ def export_to_printed_form(doc_no):
         output_filename = f"Change_Control_Sheet_{safe_doc_no}.xlsx"
         wb.save(output_filename)
         wb.close()
+
+        # 🛡️ ตรวจสอบไฟล์ที่ save แล้วว่ามีรูปจริงหรือไม่
+        try:
+            verify_wb = openpyxl.load_workbook(output_filename)
+            verify_ws = verify_wb.active
+            print("🖼️ EXCEL IMAGE COUNT AFTER SAVE:", len(verify_ws._images))
+            print("🛡️ POST-SAVE SUBJECT:", repr(verify_ws["D12"].value))
+            verify_wb.close()
+        except Exception as verify_err:
+            print("⚠️ POST-SAVE VERIFY ERROR:", type(verify_err).__name__, verify_err)
+
         return output_filename, None
     except Exception as e:
         return None, f"เกิดข้อผิดพลาดในการสร้างไฟล์ Excel: {str(e)}"
@@ -1227,7 +1319,12 @@ else:
             st.markdown("**2. ATTACHED IMAGE (รูปภาพประกอบ - พื้นที่ R12:AA14)**")
             uploaded_image = st.file_uploader("อัปโหลดรูปภาพแนบ (JPG / PNG):", type=["jpg", "jpeg", "png"], key="uploaded_image_widget")
             
-            image_base64_str = doc_data.get("IMAGE_BASE64", "")
+            image_base64_str = (
+                doc_data.get("IMAGE_BASE64", "")
+                or doc_data.get("SUBJECT_IMAGE_PATH", "")
+                or doc_data.get("IMAGE", "")
+                or ""
+            )
             if uploaded_image is not None:
                 image_base64_str = convert_image_to_base64(uploaded_image)
                 st.image(uploaded_image, caption="รูปภาพที่อัปโหลดใหม่", use_container_width=True)
