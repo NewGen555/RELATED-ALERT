@@ -447,7 +447,7 @@ def get_realtime_location(row):
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
 # =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ฉบับสมบูรณ์ รองรับทั้ง Dict และ List)
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ฉบับสมบูรณ์ แก้ไขปัญหา Subject ไม่แสดง)
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
@@ -457,6 +457,7 @@ def export_to_printed_form(doc_no):
     if not raw_data:
         return None, "❌ ไม่พบข้อมูลของเอกสารเลขที่นี้ในฐานข้อมูล"
         
+    # แปลงโครงสร้างข้อมูลให้เป็น Dict เพื่อให้ค้นหาตามชื่อหัวคอลัมน์ได้ง่าย
     doc_data = {}
     if isinstance(raw_data, dict):
         doc_data = raw_data
@@ -465,7 +466,10 @@ def export_to_printed_form(doc_no):
             doc_data[f"COL_{idx}"] = val
         potential_subjs = [str(v) for v in raw_data if v and len(str(v)) > 3 and not str(v).startswith("R0")]
         if potential_subjs:
-            doc_data["SUBJECT"] = potential_subjs[0]
+            doc_data["SUBJECT_TEXT"] = potential_subjs[0]
+
+    # พิมพ์ตรวจสอบข้อมูลดิบใน Console (ช่วยให้เห็นว่าคีย์ตรงกันไหม)
+    print(f"🔍 ข้อมูลดิบ (doc_data) ของเอกสาร {doc_no}:", doc_data)
 
     def get_val(*keys):
         for k in keys:
@@ -508,7 +512,7 @@ def export_to_printed_form(doc_no):
         write_cell("W8", get_val("EFF_PLAN", "PLAN"))
         write_cell("W9", get_val("EFF_ACTUAL", "ACTUAL"))
 
-        # 📌 1. ดึงค่า SUBJECT (รองรับชื่อคอลัมน์หลากหลายรูปแบบมากขึ้น)
+        # 📌 1. ดึงค่า SUBJECT (รองรับ SUBJECT_TEXT ตามที่ระบุใน Google Sheet)
         subj_val = get_val("SUBJECT_TEXT", "SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION")
         print(f"📌 ค่า Subject ที่ดึงมาแสดงผล: '{subj_val}'")
 
@@ -533,11 +537,8 @@ def export_to_printed_form(doc_no):
             horizontal="left"
         )
 
-        # (ส่วนโค้ดที่เหลือคงเดิม...)
-        # ...
-
         # 📌 2. ดึงและฝังรูปภาพ (ATTACHED IMAGE ในพื้นที่ R12:AA15)
-        img_raw = get_val("IMAGE_BASE64", "IMAGE", "IMAGE_DATA", "IMG")
+        img_raw = get_val("IMAGE_BASE64", "IMAGE", "IMAGE_DATA", "IMG", "SUBJECT_IMAGE_PATH")
         if img_raw and img_raw.strip():
             try:
                 img_str = img_raw.strip()
