@@ -221,7 +221,7 @@ USERS = {
     "Thanawat": {"password": sec_passwords.get("Thanawat", ""), "dept": "PDD (Product Design)", "name": "ENGINEER PDD"},
     "qc_user": {"password": sec_passwords.get("qc_user", ""), "dept": "QC (Quality Control)", "name": "ENGINEER QC"},
     "pcd_user": {"password": sec_passwords.get("pcd_user", ""), "dept": "PCD (Production Control)", "name": "ENGINEER PCD"},
-    "prd_user": {"password": sec_passwords.get("prd_user", ""), "dept": "PRO (Production / PD)", "name": "ENGINEER Production"},
+    "prd_user": {"password": sec_passwords.get("prd_user", ""), "dept": "PRD (Production / PD)", "name": "ENGINEER Production"},
     "mgr_pdd": {"password": sec_passwords.get("mgr_pdd", ""), "dept": "MGR - PDD (ผู้จัดการ PDD)", "name": "ผู้จัดการ PDD"},
     "mgr_qcd": {"password": sec_passwords.get("mgr_qcd", ""), "dept": "MGR - QCD (ผู้จัดการ QC)", "name": "ผู้จัดการ QC"},
     "mgr_pcd": {"password": sec_passwords.get("mgr_pcd", ""), "dept": "MGR - PCD (ผู้จัดการ PCD)", "name": "ผู้จัดการ PCD"},
@@ -289,8 +289,64 @@ ITEM_DEPT_MAPPING = {
     12: ("QC", "INSPECTION STD. + DATA CHECK."), 13: ("QC", "MSA"),
     14: ("QC", "PSW UP-DATE., PPAP APPROVAL."), 15: ("QC", "CHECKING FIXTURE."),
     16: ("PCD", "MATERIAL REQUIREMENT."), 17: ("PCD", "PACKING STANDARD."),
-    18: ("PRO", "WORKING INSTRUCTION."), 19: ("PRO", "TRAINING PRODUCTION.")
+    18: ("PRD", "WORKING INSTRUCTION."), 19: ("PRD", "TRAINING PRODUCTION.")
 }
+
+DEPT_ITEM_RANGES = {
+    "PDD": list(range(1, 8)),
+    "QC": list(range(8, 16)),
+    "PCD": list(range(16, 18)),
+    "PRD": list(range(18, 20)),
+}
+
+DEPT_LABELS = {
+    "PDD": "PDD — ข้อ 1-7",
+    "QC": "QC — ข้อ 8-15",
+    "PCD": "PCD — ข้อ 16-17",
+    "PRD": "PRD — ข้อ 18-19",
+}
+
+def get_user_dept_code(dept_text=None):
+    text = str(dept_text or st.session_state.get("current_dept", "")).upper()
+    if "MGR - PDD" in text or text.startswith("PDD"):
+        return "PDD"
+    if "MGR - QCD" in text or text.startswith("QC") or "QUALITY" in text:
+        return "QC"
+    if "MGR - PCD" in text or text.startswith("PCD"):
+        return "PCD"
+    if "MGR - PD" in text or text.startswith("PRD") or "PRODUCTION / PD" in text or text.startswith("PRO"):
+        return "PRD"
+    return ""
+
+def get_dept_completion(doc_data, dept_code):
+    item_numbers = DEPT_ITEM_RANGES.get(dept_code, [])
+    missing = []
+    for num in item_numbers:
+        rev = get_doc_value(doc_data, num, "REVISE").upper().strip()
+        resp = get_doc_value(doc_data, num, "RESP").strip()
+        plan = get_doc_value(doc_data, num, "PLAN").strip()
+        close = get_doc_value(doc_data, num, "CLOSE").strip()
+        _, title = ITEM_DEPT_MAPPING.get(num, (dept_code, ""))
+        if rev not in ("YES", "NO"):
+            missing.append(f"ข้อ {num}: ยังไม่ได้เลือก YES/NO ({title})")
+            continue
+        if rev == "YES":
+            if not resp or resp == "-":
+                missing.append(f"ข้อ {num}: ยังไม่ได้ระบุผู้รับผิดชอบ ({title})")
+            if not plan or plan == "-":
+                missing.append(f"ข้อ {num}: ยังไม่ได้ระบุ Plan Date ({title})")
+            if not close or close == "-":
+                missing.append(f"ข้อ {num}: ยังไม่ได้ระบุ Actual Close ({title})")
+    return len(missing) == 0, missing
+
+def get_all_dept_completion(doc_data):
+    result = {}
+    all_missing = []
+    for dept_code in ("PDD", "QC", "PCD", "PRD"):
+        ok, missing = get_dept_completion(doc_data, dept_code)
+        result[dept_code] = ok
+        all_missing.extend([f"[{dept_code}] {m}" for m in missing])
+    return all(result.values()), result, all_missing
 
 def get_doc_value(doc_data, num, field_type):
     if doc_data is None:
@@ -580,30 +636,25 @@ def get_realtime_location(row):
     if status == "APPROVED" or row.get('APPR_GM'):
         return "🟢 อนุมัติเสร็จสมบูรณ์แล้ว", "อนุมัติครบถ้วน (GM Approved)", "SUCCESS"
     
-    pending_depts = set()
-    for num in range(1, 20):
-        rev = get_doc_value(row, num, "REVISE").upper()
-        if rev == "YES":
-            close_val = get_doc_value(row, num, "CLOSE")
-            resp_val = get_doc_value(row, num, "RESP")
-            if not close_val or close_val == "-" or not resp_val or resp_val == "-":
-                dept, _ = ITEM_DEPT_MAPPING.get(num, ("-", "-"))
-                pending_depts.add(dept)
-                
-    if pending_depts:
-        depts_str = ", ".join(sorted(list(pending_depts)))
-        return "🔵 กำลังดำเนินการ", f"ติดอยู่ที่แผนก: {depts_str} (รอปิดข้อ YES & ลง Actual Close)", "ENGINEER"
+    # ตรวจสถานะทั้ง 4 แผนกจากกติกาเดียวกับหน้า Form
+    _, dept_completion, _ = get_all_dept_completion(row)
+    pending_depts = [d for d in ("PDD", "QC", "PCD", "PRD") if not dept_completion[d]]
 
+    if pending_depts:
+        depts_str = ", ".join(pending_depts)
+        return "🔵 กำลังดำเนินการ", f"ติดอยู่ที่แผนก: {depts_str} (รอกรอก/ปิดงาน checklist)", "ENGINEER"
+
+    # Manager loop: PDD -> QC -> PCD -> PRD -> GM
     if not row.get('APPR_PDD_MGR'):
-        return "🟡 รอการอนุมัติ", "อยู่ที่แผนก: PDD (รอ PDD Manager ลงนาม)", "MGR"
+        return "🟡 รอการอนุมัติ", "อยู่ที่ PDD Manager (รอ PDD MGR ลงนาม)", "MGR"
     elif not row.get('APPR_QCD_MGR'):
-        return "🟡 รอการอนุมัติ", "อยู่ที่แผนก: QC (รอ QCD Manager ลงนาม)", "MGR"
-    elif not row.get('APPR_PRD_MGR'):
-        return "🟡 รอการอนุมัติ", "อยู่ที่แผนก: PRO/PD (รอ PRD Manager ลงนาม)", "MGR"
+        return "🟡 รอการอนุมัติ", "อยู่ที่ QC Manager (รอ QCD MGR ลงนาม)", "MGR"
     elif not row.get('APPR_PCD_MGR'):
-        return "🟡 รอการอนุมัติ", "อยู่ที่แผนก: PCD (รอ PCD Manager ลงนาม)", "MGR"
+        return "🟡 รอการอนุมัติ", "อยู่ที่ PCD Manager (รอ PCD MGR ลงนาม)", "MGR"
+    elif not row.get('APPR_PRD_MGR'):
+        return "🟡 รอการอนุมัติ", "อยู่ที่ PRD Manager (รอ PRD MGR ลงนาม)", "MGR"
     elif not row.get('APPR_GM'):
-        return "🟡 รอการอนุมัติ", "อยู่ที่ผู้บริหาร: AGM / GM (รอ GM ลงนามอนุมัติ)", "MGR"
+        return "🟡 รอการอนุมัติ", "อยู่ที่ผู้บริหาร AGM / GM (รอ GM ลงนามอนุมัติ)", "MGR"
         
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
@@ -1058,24 +1109,72 @@ else:
     else:
         st.subheader(f"📌 การจัดการเอกสารสำหรับ: {selected_dept}")
         
-        # ส่วนเลือกสร้างเอกสารใหม่ หรือดึงเอกสารเดิมมาแก้ไข
-        action_type = st.radio("เลือกการทำงาน:", ["สร้างเอกสารใหม่ (PDD)", "ค้นหา/แก้ไข เอกสารเดิม"], horizontal=True)
-        
+        user_dept = get_user_dept_code(selected_dept)
+        is_manager = "MGR -" in str(selected_dept) or "AGM / GM" in str(selected_dept)
+        can_create_new = user_dept == "PDD" and not is_manager
+
+        if can_create_new:
+            action_type = st.radio(
+                "เลือกการทำงาน:",
+                ["สร้างเอกสารใหม่ (PDD)", "ค้นหา/แก้ไข เอกสารเดิม"],
+                horizontal=True,
+                key="action_type_main"
+            )
+        else:
+            action_type = "ค้นหา/แก้ไข เอกสารเดิม"
+            st.info("🔐 บัญชีนี้ค้นหาเอกสารเดิมได้ และแก้ไขได้เฉพาะ checklist ของแผนกตนเอง")
+
         doc_data = {}
         doc_no = ""
 
         if action_type == "ค้นหา/แก้ไข เอกสารเดิม":
-            doc_no = st.text_input("กรอก DOCUMENT NO. ที่ต้องการดึงข้อมูล:", key="search_doc_main").strip().upper()
+            doc_no = st.text_input(
+                "กรอก DOCUMENT NO. ที่ต้องการดึงข้อมูล:",
+                key="search_doc_main",
+                placeholder="เช่น R001/26"
+            ).strip().upper()
+
             if doc_no:
-                doc_data = get_document_data(doc_no)
+                doc_data = get_document_data(doc_no) or {}
                 if doc_data:
-                    st.success(f"✅ พบข้อมูลเอกสารเลขที่ {doc_no}")
+                    loaded_key = st.session_state.get("_loaded_doc_no")
+                    if loaded_key != doc_no:
+                        st.session_state["_loaded_doc_no"] = doc_no
+                        st.session_state["doc_no_field"] = doc_data.get("DOCUMENT_NO", doc_no)
+                        st.session_state["customer_field"] = doc_data.get("CUSTOMER_NAME", "")
+                        st.session_state["part_name_field"] = doc_data.get("PART_NAME", "")
+                        st.session_state["part_no_field"] = doc_data.get("PART_NO", "")
+                        st.session_state["model_field"] = doc_data.get("MODEL", "")
+                        st.session_state["dwg_field"] = doc_data.get("MASTER_DWG_NO", "")
+                        st.session_state["ref_doc_field"] = doc_data.get("REF_DOC_NO", "")
+                        st.session_state["issue_by_field"] = doc_data.get("ISSUE_BY", st.session_state.user_name)
+                        issue_date_loaded = doc_data.get("DATE", "")
+                        try:
+                            st.session_state["issue_date_field"] = date.fromisoformat(str(issue_date_loaded)[:10]) if issue_date_loaded else date.today()
+                        except Exception:
+                            st.session_state["issue_date_field"] = date.today()
+                        st.session_state["subject_field"] = doc_data.get("SUBJECT_TEXT", "")
+                        for n in range(1, 20):
+                            st.session_state[f"rev_{n}"] = get_doc_value(doc_data, n, "REVISE").upper() or "-"
+                            st.session_state[f"resp_{n}"] = get_doc_value(doc_data, n, "RESP")
+                            st.session_state[f"plan_{n}"] = get_doc_value(doc_data, n, "PLAN")
+                            st.session_state[f"close_{n}"] = get_doc_value(doc_data, n, "CLOSE")
+                        st.session_state.pop("uploaded_image_widget", None)
+                    st.success(f"✅ โหลดข้อมูลเดิมของเอกสาร {doc_no} สำเร็จ")
                     print("📝 FORM LOAD SUBJECT_TEXT:", repr(doc_data.get("SUBJECT_TEXT", "")))
                 else:
                     st.error("❌ ไม่พบข้อมูลเอกสารในระบบ")
+        else:
+            if st.session_state.get("_loaded_doc_no") != "__NEW__":
+                st.session_state["_loaded_doc_no"] = "__NEW__"
+                for key in ["doc_no_field","customer_field","part_name_field","part_no_field","model_field","dwg_field","ref_doc_field","issue_by_field","subject_field","issue_date_field"]:
+                    st.session_state.pop(key, None)
+                for n in range(1, 20):
+                    for prefix in ("rev_", "resp_", "plan_", "close_"):
+                        st.session_state.pop(f"{prefix}{n}", None)
 
         st.markdown("---")
-        
+
         # 📌 เพิ่มปุ่มดาวน์โหลดเอกสารไว้ด้านบนสุดของแบบฟอร์มหากมีข้อมูลเอกสารแล้ว
         current_doc_id = doc_data.get("DOCUMENT_NO", doc_no)
         if current_doc_id:
@@ -1090,17 +1189,22 @@ else:
 
         c1, c2, c3 = st.columns(3)
         with c1:
-            doc_no_val = st.text_input("DOCUMENT NO.", value=doc_data.get("DOCUMENT_NO", doc_no))
-            customer_name = st.text_input("CUSTOMER NAME", value=doc_data.get("CUSTOMER_NAME", ""))
-            part_name = st.text_input("PART NAME", value=doc_data.get("PART_NAME", ""))
+            doc_no_val = st.text_input("DOCUMENT NO.", key="doc_no_field")
+            customer_name = st.text_input("CUSTOMER NAME", key="customer_field")
+            part_name = st.text_input("PART NAME", key="part_name_field")
         with c2:
-            part_no = st.text_input("PART NO.", value=doc_data.get("PART_NO", ""))
-            model = st.text_input("MODEL", value=doc_data.get("MODEL", ""))
-            master_dwg_no = st.text_input("MASTER DWG NO.", value=doc_data.get("MASTER_DWG_NO", ""))
+            part_no = st.text_input("PART NO.", key="part_no_field")
+            model = st.text_input("MODEL", key="model_field")
+            master_dwg_no = st.text_input("MASTER DWG NO.", key="dwg_field")
         with c3:
-            issue_date = st.date_input("DATE", value=date.today())
-            ref_doc_no = st.text_input("REF. DOC. NO.", value=doc_data.get("REF_DOC_NO", ""))
-            issue_by = st.text_input("ISSUE BY", value=doc_data.get("ISSUE_BY", st.session_state.user_name))
+            issue_date_raw = doc_data.get("DATE", "")
+            try:
+                issue_date_default = date.fromisoformat(str(issue_date_raw)[:10]) if issue_date_raw else date.today()
+            except Exception:
+                issue_date_default = date.today()
+            issue_date = st.date_input("DATE", value=issue_date_default, key="issue_date_field")
+            ref_doc_no = st.text_input("REF. DOC. NO.", key="ref_doc_field")
+            issue_by = st.text_input("ISSUE BY", key="issue_by_field")
 
         # =========================================================
         # 📌 SUBJECT TEXT (พื้นที่ D12:Q14) & IMAGE UPLOAD (พื้นที่ R12:AA14)
@@ -1114,14 +1218,14 @@ else:
             st.markdown("**1. SUBJECT (รายละเอียดเรื่องที่เปลี่ยนแปลง - พื้นที่ D12:Q14)**")
             subject_text = st.text_area(
                 "กรอกเนื้อหา Subject / รายละเอียดการเปลี่ยนแปลง:",
-                value=doc_data.get("SUBJECT_TEXT", ""),
                 height=150,
-                placeholder="ระบุข้อความรายละเอียดการเปลี่ยนแปลงที่นี่..."
+                placeholder="ระบุข้อความรายละเอียดการเปลี่ยนแปลงที่นี่...",
+                key="subject_field"
             )
 
         with col_img:
             st.markdown("**2. ATTACHED IMAGE (รูปภาพประกอบ - พื้นที่ R12:AA14)**")
-            uploaded_image = st.file_uploader("อัปโหลดรูปภาพแนบ (JPG / PNG):", type=["jpg", "jpeg", "png"])
+            uploaded_image = st.file_uploader("อัปโหลดรูปภาพแนบ (JPG / PNG):", type=["jpg", "jpeg", "png"], key="uploaded_image_widget")
             
             image_base64_str = doc_data.get("IMAGE_BASE64", "")
             if uploaded_image is not None:
@@ -1133,36 +1237,61 @@ else:
         st.markdown("---")
         st.subheader("📋 รายการตรวจสอบและแผนการดำเนินงาน (Checklist 19 รายการ)")
 
-        # วนลูปสร้าง UI Checklist สำหรับทั้ง 19 รายการ
+        # =========================================================
+        # Checklist 19 ข้อ แยกตามสิทธิ์แผนก
+        # PDD 1-7 | QC 8-15 | PCD 16-17 | PRD 18-19
+        # =========================================================
         checklist_results = {}
-        for i in range(1, 20):
-            dept, title = ITEM_DEPT_MAPPING[i]
-            st.markdown(f"**ข้อ {i}. [{dept}] {title}**")
-            
-            curr_rev = get_doc_value(doc_data, i, "REVISE").upper()
-            curr_resp = get_doc_value(doc_data, i, "RESP")
-            curr_plan = get_doc_value(doc_data, i, "PLAN")
-            curr_close = get_doc_value(doc_data, i, "CLOSE")
+        st.markdown("### 🧭 แบ่งส่วนงาน")
+        st.info("PDD: ข้อ 1-7  |  QC: ข้อ 8-15  |  PCD: ข้อ 16-17  |  PRD: ข้อ 18-19")
 
-            col_a, col_b, col_c, col_d = st.columns([1.5, 2, 2, 2])
-            with col_a:
-                rev_choice = st.radio(f"แก้ไขข้อ {i}", ["-", "YES", "NO"], index=1 if curr_rev=="YES" else (2 if curr_rev=="NO" else 0), key=f"rev_{i}", horizontal=True)
-            with col_b:
-                resp_choice = st.text_input(f"ผู้รับผิดชอบ ข้อ {i}", value=curr_resp, key=f"resp_{i}")
-            with col_c:
-                plan_choice = st.text_input(f"Plan Date ข้อ {i}", value=curr_plan, key=f"plan_{i}")
-            with col_d:
-                close_choice = st.text_input(f"Actual Close ข้อ {i}", value=curr_close, key=f"close_{i}")
+        for dept_code, label in DEPT_LABELS.items():
+            item_numbers = DEPT_ITEM_RANGES[dept_code]
+            dept_ok, dept_missing = get_dept_completion(doc_data, dept_code)
+            status_text = "✅ ครบ" if dept_ok else "⏳ ยังไม่ครบ"
+            with st.expander(f"{label} — {status_text}", expanded=(dept_code == user_dept or is_manager)):
+                if dept_code == user_dept and not is_manager:
+                    st.caption("✏️ แผนกของคุณ: แก้ไขข้อมูลได้เฉพาะข้อในส่วนนี้")
+                else:
+                    st.caption("🔒 อ่านอย่างเดียว: ไม่มีสิทธิ์แก้ไขรายการของแผนกนี้")
 
-            checklist_results[f"DOC_{i}_REVISE"] = rev_choice
-            checklist_results[f"DOC_{i}_RESP"] = resp_choice
-            checklist_results[f"DOC_{i}_PLAN"] = plan_choice
-            checklist_results[f"DOC_{i}_CLOSE"] = close_choice
+                for i in item_numbers:
+                    _, title = ITEM_DEPT_MAPPING[i]
+                    curr_rev = get_doc_value(doc_data, i, "REVISE").upper()
+                    curr_resp = get_doc_value(doc_data, i, "RESP")
+                    curr_plan = get_doc_value(doc_data, i, "PLAN")
+                    curr_close = get_doc_value(doc_data, i, "CLOSE")
+                    st.markdown(f"**ข้อ {i}. [{dept_code}] {title}**")
 
-        # =========================================================
-        # 🖊️ ส่วนการลงนามอนุมัติ (MANAGER APPROVAL)
-        # =========================================================
-        st.markdown("---")
+                    if dept_code == user_dept and not is_manager:
+                        col_a, col_b, col_c, col_d = st.columns([1.5, 2, 2, 2])
+                        with col_a:
+                            rev_choice = st.radio(f"แก้ไขข้อ {i}", ["-", "YES", "NO"], key=f"rev_{i}", horizontal=True)
+                        with col_b:
+                            resp_choice = st.text_input(f"ผู้รับผิดชอบ ข้อ {i}", key=f"resp_{i}")
+                        with col_c:
+                            plan_choice = st.text_input(f"Plan Date ข้อ {i}", key=f"plan_{i}")
+                        with col_d:
+                            close_choice = st.text_input(f"Actual Close ข้อ {i}", key=f"close_{i}")
+                        checklist_results[f"DOC_{i}_REVISE"] = rev_choice
+                        checklist_results[f"DOC_{i}_RESP"] = resp_choice
+                        checklist_results[f"DOC_{i}_PLAN"] = plan_choice
+                        checklist_results[f"DOC_{i}_CLOSE"] = close_choice
+                    else:
+                        c1, c2, c3, c4 = st.columns([1.5, 2, 2, 2])
+                        c1.write(f"REVISE: **{curr_rev or '-'}**")
+                        c2.write(f"RESP: **{curr_resp or '-'}**")
+                        c3.write(f"PLAN: **{curr_plan or '-'}**")
+                        c4.write(f"CLOSE: **{curr_close or '-'}**")
+
+                if dept_ok:
+                    st.success("ส่วนงานนี้กรอกและปิดงานครบแล้ว")
+                else:
+                    for m in dept_missing[:8]:
+                        st.warning(m)
+                    if len(dept_missing) > 8:
+                        st.caption(f"และอีก {len(dept_missing)-8} รายการ...")
+
         st.subheader("🖊️ การลงนามอนุมัติเอกสาร (Manager Approval)")
 
         appr_pdd = doc_data.get("APPR_PDD_MGR", "")
@@ -1171,15 +1300,20 @@ else:
         appr_pcd = doc_data.get("APPR_PCD_MGR", "")
         appr_gm  = doc_data.get("APPR_GM", "")
 
-        is_completed, missing_reasons = check_yes_items_completed(doc_data)
+        is_completed, dept_completion, missing_reasons = get_all_dept_completion(doc_data)
 
-        if "MGR" in selected_dept or "GM" in selected_dept:
-            if not is_completed:
-                st.warning("⚠️ ยังไม่สามารถลงนามอนุมัติได้ เนื่องจากรายการ YES ยังปิดงานไม่ครบถ้วน:")
-                for m in missing_reasons:
-                    st.write(f"- {m}")
-            else:
-                st.success("✅ ปิดงานข้อ YES ครบถ้วนแล้ว สามารถลงนามอนุมัติได้")
+        st.markdown("### 📊 สถานะการปิดงานก่อนเข้า Approval Loop")
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        for col, dept_code in zip([sc1, sc2, sc3, sc4], ["PDD", "QC", "PCD", "PRD"]):
+            with col:
+                st.metric(dept_code, "✅ ครบ" if dept_completion[dept_code] else "⏳ ยังไม่ครบ")
+
+        if not is_completed:
+            st.warning("⚠️ ยังไม่เปิด Manager Approval — ทั้ง 4 แผนกต้องกรอกและปิดงานส่วนของตนเองให้ครบก่อน")
+            for m in missing_reasons[:20]:
+                st.write(f"- {m}")
+        else:
+            st.success("✅ PDD + QC + PCD + PRD ปิดงานครบแล้ว — เข้าสู่ Manager Approval Loop ได้")
 
         col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
         with col_m1:
@@ -1202,38 +1336,38 @@ else:
                     appr_qcd = st.session_state.user_name
                     date_qcd = str(date.today())
                     save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_QCD_MGR": appr_qcd, "DATE_QCD_MGR": date_qcd})
-                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ QC", "PRD_MGR", "ผู้จัดการ Production (PRD MGR)")
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ QC", "PCD_MGR", "ผู้จัดการ PCD (PCD MGR)")
                     st.success("ลงนามอนุมัติสำเร็จ!")
                     st.rerun()
 
         with col_m3:
             st.markdown("**PRD MGR**")
             st.info(appr_prd if appr_prd else "รอลงนาม")
-            if "MGR - PD" in selected_dept and is_completed and appr_qcd and not appr_prd:
+            if "MGR - PD" in selected_dept and is_completed and appr_pcd and not appr_prd:
                 if st.button("🖊️ ลงนามอนุมัติ (PRD MGR)"):
                     appr_prd = st.session_state.user_name
                     date_prd = str(date.today())
                     save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_PRD_MGR": appr_prd, "DATE_PRD_MGR": date_prd})
-                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PRD", "PCD_MGR", "ผู้จัดการ PCD (PCD MGR)")
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PRD", "GM", "ผู้บริหาร (AGM / GM)")
                     st.success("ลงนามอนุมัติสำเร็จ!")
                     st.rerun()
 
         with col_m4:
             st.markdown("**PCD MGR**")
             st.info(appr_pcd if appr_pcd else "รอลงนาม")
-            if "MGR - PCD" in selected_dept and is_completed and appr_prd and not appr_pcd:
+            if "MGR - PCD" in selected_dept and is_completed and appr_qcd and not appr_pcd:
                 if st.button("🖊️ ลงนามอนุมัติ (PCD MGR)"):
                     appr_pcd = st.session_state.user_name
                     date_pcd = str(date.today())
                     save_to_excel({"DOCUMENT_NO": doc_no_val, "APPR_PCD_MGR": appr_pcd, "DATE_PCD_MGR": date_pcd})
-                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PCD", "GM", "ผู้บริหาร (AGM / GM)")
+                    send_approval_next_step_email(doc_no_val, customer_name, part_name, "ผู้จัดการ PCD", "PRD_MGR", "ผู้จัดการ PRD (PRD MGR)")
                     st.success("ลงนามอนุมัติสำเร็จ!")
                     st.rerun()
 
         with col_m5:
             st.markdown("**AGM / GM**")
             st.info(appr_gm if appr_gm else "รอลงนาม")
-            if "AGM / GM" in selected_dept and is_completed and appr_pcd and not appr_gm:
+            if "AGM / GM" in selected_dept and is_completed and appr_prd and not appr_gm:
                 if st.button("🖊️ ลงนามอนุมัติขั้นสุดท้าย (GM)"):
                     appr_gm = st.session_state.user_name
                     date_gm = str(date.today())
@@ -1274,9 +1408,12 @@ else:
                         # ตรวจสอบการส่ง Email แจ้งเตือนเมื่อวิศวกรปิดข้อ YES ครบ
                         check_data = get_document_data(doc_no_val)
                         completed, _ = check_yes_items_completed(check_data)
-                        if completed and not check_data.get("APPR_PDD_MGR"):
+                        all_done, _, all_missing = get_all_dept_completion(check_data)
+                        if all_done and not check_data.get("APPR_PDD_MGR"):
                             send_all_completed_alert_email(doc_no_val, customer_name, part_name)
-                            st.info("📧 ส่งอีเมลแจ้งเตือนไปยัง PDD Manager เรียบร้อยแล้ว")
+                            st.info("📧 ทุกแผนกปิดงานครบแล้ว — ส่งอีเมลแจ้ง PDD Manager เพื่อเริ่ม Approval Loop")
+                        elif not all_done:
+                            st.info(f"ℹ️ บันทึกแล้ว แต่ยังไม่ส่งเข้า Manager Approval เพราะยังเหลือ {len(all_missing)} รายการ")
         with col_b2:
             if doc_no_val:
                 render_download_excel_button(doc_no_val, "📥 ดาวน์โหลด Excel ฟอร์มจริง")
