@@ -516,8 +516,21 @@ def export_to_printed_form(doc_no):
         write_cell("W8", get_val("EFF_PLAN", "PLAN"))
         write_cell("W9", get_val("EFF_ACTUAL", "ACTUAL"))
 
-        # 📌 1. ดึงค่า SUBJECT (รองรับ SUBJECT_TEXT ตามที่ระบุใน Google Sheet)
-        subj_val = get_val("SUBJECT_TEXT", "SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION")
+        # 📌 1. ดึงค่า SUBJECT (บังคับค้นหาผ่าน SUBJECT_TEXT และคีย์ใกล้เคียงอย่างแม่นยำ)
+        subj_val = ""
+        if "SUBJECT_TEXT" in doc_data:
+            subj_val = str(doc_data["SUBJECT_TEXT"])
+        else:
+            for k, v in doc_data.items():
+                if "SUBJECT" in str(k).upper() or "DESC" in str(k).upper():
+                    if v is not None:
+                        subj_val = str(v)
+                        break
+        
+        # ถ้ายังไม่เจอ ให้ลองเรียกผ่านฟังก์ชัน get_val เผื่อกรณีสะกดต่างกันเล็กน้อย
+        if not subj_val or subj_val.strip() == "":
+            subj_val = get_val("SUBJECT_TEXT", "SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION")
+            
         print(f"📌 ค่า Subject ที่ดึงมาแสดงผล: '{subj_val}'")
 
         # แก้ปัญหา Merged Cell D12:Q15
