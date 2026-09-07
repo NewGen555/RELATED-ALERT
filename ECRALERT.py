@@ -969,71 +969,14 @@ else:
                     st.markdown("<br>", unsafe_allow_html=True)
                     submit_btn = st.form_submit_button("💾 บันทึกข้อมูลลงระบบ", type="primary", use_container_width=True)
 
-if submit_btn:
-    if save_to_excel(form_data):
-     st.success("✅ บันทึกข้อมูลสำเร็จเรียบร้อยแล้ว!")
+                            if submit_btn:
+                               if save_to_excel(form_data):
+                                   st.success("✅ บันทึกข้อมูลสำเร็จเรียบร้อยแล้ว!")
                             
-     updated_doc = get_document_data(doc_no)
-     is_completed, _ = check_yes_items_completed(updated_doc)
-        if is_completed:
-                                send_all_completed_alert_email(doc_no, customer, part_name)
-                                st.balloons()
-                            st.rerun()
-                     # เติมคอลัมน์ที่ต้องการแสดงในตาราง Dashboard
-        show_cols = [
-            'DOCUMENT_NO', 'CUSTOMER_NAME', 'PART_NAME', 'MODEL', 
-            'ISSUE_BY', 'MAIN_STATUS', 'CURRENT_LOCATION'
-        ]
-        
-        # กรองเฉพาะคอลัมน์ที่มีอยู่จริงเพื่อป้องกัน KeyError
-        valid_cols = [col for col in show_cols if col in display_df.columns]
-        
-        # แสดงผลตาราง Realtime Overview
-        st.dataframe(
-            display_df[valid_cols],
-            use_container_width=True,
-            hide_index=True
-        )
-
-# =============================================================
-# 📝 VIEW 2: บันทึก / อนุมัติ เอกสาร (FORM ENTRY & APPROVAL)
-# =============================================================
-elif menu == "📝 บันทึก/อนุมัติ เอกสาร":
-    st.title("📝 บันทึกข้อมูลและลงนามอนุมัติเอกสาร")
-    st.caption(f"ผู้ใช้งานปัจจุบัน: {st.session_state.user_name} ({st.session_state.current_dept})")
-    
-    # ดึงรายชื่อเอกสารทั้งหมดเพื่อทำ Dropdown ให้เลือก
-    df_all_docs = get_all_documents()
-    
-    if df_all_docs.empty:
-        st.warning("⚠️ ไม่พบข้อมูลเอกสารในระบบ")
-    else:
-        doc_list = df_all_docs['DOCUMENT_NO'].dropna().unique().tolist()
-        selected_doc = st.selectbox("📌 เลือกเลขที่เอกสารที่ต้องการจัดการ:", doc_list)
-        
-        if selected_doc:
-            doc_data = get_document_data(selected_doc)
-            
-            if doc_data:
-                st.markdown("---")
-                # -------------------------------------------------------------
-                # 📥 ปุ่มดาวน์โหลด Excel ในหน้าจัดการเอกสาร
-                # -------------------------------------------------------------
-                st.markdown("### 🖨️ ดาวน์โหลดเอกสาร (Excel Form)")
-                render_download_excel_button(
-                    doc_no=selected_doc, 
-                    button_label=f"📥 ออกเอกสารแบบฟอร์มจริง ({selected_doc})"
-                )
-                st.markdown("---")
-                
-                # แสดงรายละเอียดข้อมูลเอกสารที่เลือก
-                st.subheader(f"📄 รายละเอียดเอกสาร: {selected_doc}")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.write(f"**Customer:** {doc_data.get('CUSTOMER_NAME', '-')}")
-                    st.write(f"**Part Name:** {doc_data.get('PART_NAME', '-')}")
-                    st.write(f"**Part No:** {doc_data.get('PART_NO', '-')}")
-                with col_b:
-                    st.write(f"**Model:** {doc_data.get('MODEL', '-')}")
-                    st.write(f"**Issue By:** {doc_data.get('ISSUE_BY', '-')}")
-                    st.write(f"**Date:** {doc_data.get('DATE', '-')}")     
+                                   updated_doc = get_document_data(doc_no)
+                                   is_completed, _ = check_yes_items_completed(updated_doc)
+                                    if is_completed:
+                                      send_all_completed_alert_email(doc_no, customer, part_name)
+                                       st.balloons()
+                                       st.rerun()
+                      
