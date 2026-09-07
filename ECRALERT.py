@@ -926,20 +926,20 @@ else:
                     st.error("❌ กรุณาระบุ DOCUMENT NO.")
                 else:
                     # ค้นหาบรรทัด save_data ในส่วนการกดปุ่มบันทึก แล้วปรับให้ส่งทั้ง SUBJECT_TEXT และ SUBJECT
-save_data = {
-    "DOCUMENT_NO": doc_no_val,
-    "CUSTOMER_NAME": customer_name,
-    "PART_NAME": part_name,
-    "PART_NO": part_no,
-    "MODEL": model,
-    "MASTER_DWG_NO": master_dwg_no,
-    "DATE": str(issue_date),
-    "REF_DOC_NO": ref_doc_no,
-    "ISSUE_BY": issue_by,
-    "SUBJECT_TEXT": subject_text,
-    "SUBJECT": subject_text,  # 📌 เพิ่ม Key นี้รองรับกรณีตาราง Google Sheet ใช้ชื่อ SUBJECT
-    "IMAGE_BASE64": image_base64_str
-}
+                    save_data = {
+                        "DOCUMENT_NO": doc_no_val,
+                        "CUSTOMER_NAME": customer_name,
+                        "PART_NAME": part_name,
+                        "PART_NO": part_no,
+                        "MODEL": model,
+                        "MASTER_DWG_NO": master_dwg_no,
+                        "DATE": str(issue_date),
+                        "REF_DOC_NO": ref_doc_no,
+                        "ISSUE_BY": issue_by,
+                        "SUBJECT_TEXT": subject_text,
+                        "SUBJECT": subject_text,  # 📌 เพิ่ม Key นี้รองรับกรณีตาราง Google Sheet ใช้ชื่อ SUBJECT
+                        "IMAGE_BASE64": image_base64_str
+                     }
                     save_data.update(checklist_results)
 
                     if save_to_excel(save_data):
