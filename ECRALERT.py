@@ -459,7 +459,8 @@ def export_to_printed_form(doc_no):
                     ws.cell(row=merged_range.min_row, column=merged_range.min_col, value=value)
                     return
             target_cell.value = value
-        
+
+        # Write Standard Header Fields
         write_cell("D3", doc_data.get("PART_NAME", ""))
         write_cell("D4", doc_data.get("PART_NO", ""))
         write_cell("F5", doc_data.get("MASTER_DWG_NO", ""))
@@ -473,8 +474,44 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
-        write_cell("D12", doc_data.get("SUBJECT_TEXT", ""))
-        
+        # =========================================================================
+        # 1. เขียน Subject Text ลงในเซลล์ D12 (ซึ่งผสานกับพื้นที่ D12:Q14)
+        # =========================================================================
+        subject_text = doc_data.get("SUBJECT_TEXT", "")
+        if not subject_text:
+            # Fallback หากฟิลด์ใน Sheet ใช้ชื่อ SUBJECT
+            subject_text = doc_data.get("SUBJECT", "")
+        write_cell("D12", subject_text)
+
+        # =========================================================================
+        # 2. ถอดรหัส Base64 Image และแทรกรูปภาพลงในพื้นที่ R12:AA14
+        # =========================================================================
+        image_base64 = doc_data.get("SUBJECT_IMAGE", "") or doc_data.get("IMAGE_BASE64", "")
+        if image_base64 and "base64," in image_base64:
+            try:
+                # แยกส่วน Header ออก เอาเฉพาะสายอักขระ base64
+                base64_data = image_base64.split("base64,")[1]
+                image_bytes = base64.b64decode(base64_data)
+                
+                # โหลดรูปภาพด้วย PIL เพื่อคำนวณและปรับขนาดให้พอดีกับกรอบ R12:AA14
+                img_pil = Image.open(io.BytesIO(image_bytes))
+                
+                # กำหนดขนาดพิกเซลที่เหมาะสมสำหรับพื้นที่ R12:AA14 (ปรับตามความกว้าง-สูงของ Template)
+                img_pil.thumbnail((300, 80), Image.Resampling.LANCZOS)
+                
+                img_byte_arr = io.BytesIO()
+                img_format = img_pil.format if img_pil.format else "JPEG"
+                img_pil.save(img_byte_arr, format=img_format)
+                img_byte_arr.seek(0)
+
+                # ปรับแต่งการวางรูปภาพใน openpyxl
+                xl_img = openpyxl.drawing.image.Image(img_byte_arr)
+                xl_img.anchor = "R12"  # วางตำแหน่งมุมซ้ายบนที่เซลล์ R12
+                ws.add_image(xl_img)
+            except Exception as img_err:
+                st.warning(f"⚠️ ไม่สามารถเพิ่มรูปภาพลงใน Excel ได้: {img_err}")
+
+        # Checkboxes and Other Information
         write_cell("I12", "X" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
         write_cell("I13", "X" if doc_data.get("ATTACH_ECI") == "YES" else "")
         write_cell("I14", "X" if doc_data.get("ATTACH_MEETING") == "YES" else "")
@@ -484,6 +521,7 @@ def export_to_printed_form(doc_no):
         write_cell("S13", "X" if judgement_val == "FEASIBLE" else "")
         write_cell("S14", "X" if judgement_val == "IMPROBABILITY" else "")
 
+        # Items Checklist (1-19)
         start_row = 19
         for i in range(1, 20):
             current_row = start_row + (i - 1)
@@ -499,6 +537,7 @@ def export_to_printed_form(doc_no):
             write_cell(f"U{current_row}", get_doc_value(doc_data, i, "PLAN"))
             write_cell(f"Y{current_row}", get_doc_value(doc_data, i, "CLOSE"))
             
+        # Manager Approvals
         write_cell("O41", doc_data.get("APPR_PDD_MGR", ""))
         write_cell("N44", doc_data.get("DATE_PDD_MGR", ""))
         write_cell("Q41", doc_data.get("APPR_QCD_MGR", ""))
