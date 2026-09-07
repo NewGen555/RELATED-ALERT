@@ -457,29 +457,20 @@ def export_to_printed_form(doc_no):
     if not raw_data:
         return None, "❌ ไม่พบข้อมูลของเอกสารเลขที่นี้ในฐานข้อมูล"
         
-    # แปลงข้อมูลให้อยู่ในรูปแบบที่ปลอดภัย ไม่ว่าจะส่งมาเป็น Dict หรือ List
     doc_data = {}
     if isinstance(raw_data, dict):
         doc_data = raw_data
     elif isinstance(raw_data, (list, tuple)):
-        # สมมติฐานกรณีเป็น List: แปลงเป็น Dict จำลอง หรือดึงตาม index 
-        # (คุณสามารถปรับ mapping ตามลำดับคอลัมน์จริงใน Google Sheets ของคุณได้ที่นี่)
-        print(f"ℹ️ พบข้อมูลแบบ List ขนาด {len(raw_data)} รายการ กำลังแมปข้อมูล...")
         for idx, val in enumerate(raw_data):
             doc_data[f"COL_{idx}"] = val
-        # เผื่อช่อง Subject อยู่ในตำแหน่ง Index ทั่วไป (เช่น ช่องที่ 2, 3 หรือ 4)
-        # ให้ดึงค่าช่องที่ยาวที่สุดหรือช่องข้อความมาใส่ Subject สำรองไว้ก่อน
         potential_subjs = [str(v) for v in raw_data if v and len(str(v)) > 3 and not str(v).startswith("R0")]
         if potential_subjs:
             doc_data["SUBJECT"] = potential_subjs[0]
 
-    # ฟังก์ชันช่วยดึงค่าแบบปลอดภัย (รองรับทั้งตัวพิมพ์เล็ก/ใหญ่และหลายชื่อคีย์)
     def get_val(*keys):
         for k in keys:
-            # 1. เช็กตรงๆ
             if k in doc_data and doc_data[k] is not None:
                 return str(doc_data[k])
-            # 2. เช็กแบบไม่สนตัวพิมพ์เล็กใหญ่ / Underscore
             for actual_k in doc_data.keys():
                 clean_actual = str(actual_k).upper().replace("_", "").replace(" ", "")
                 clean_target = str(k).upper().replace("_", "").replace(" ", "")
@@ -517,8 +508,8 @@ def export_to_printed_form(doc_no):
         write_cell("W8", get_val("EFF_PLAN", "PLAN"))
         write_cell("W9", get_val("EFF_ACTUAL", "ACTUAL"))
 
-        # 📌 1. ดึงค่า SUBJECT 
-        subj_val = get_val("SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION")
+        # 📌 1. ดึงค่า SUBJECT (รองรับชื่อคอลัมน์หลากหลายรูปแบบมากขึ้น)
+        subj_val = get_val("SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION", "DETAIL OF CHANGE", "REASON", "SUBJECT OF CHANGE")
         print(f"📌 ค่า Subject ที่ดึงมาแสดงผล: '{subj_val}'")
 
         # แก้ปัญหา Merged Cell D12:Q15
@@ -541,6 +532,9 @@ def export_to_printed_form(doc_no):
             vertical="top", 
             horizontal="left"
         )
+
+        # (ส่วนโค้ดที่เหลือคงเดิม...)
+        # ...
 
         # 📌 2. ดึงและฝังรูปภาพ (ATTACHED IMAGE ในพื้นที่ R12:AA15)
         img_raw = get_val("IMAGE_BASE64", "IMAGE", "IMAGE_DATA", "IMG")
