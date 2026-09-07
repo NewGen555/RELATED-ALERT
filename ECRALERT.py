@@ -373,6 +373,18 @@ def get_document_data(doc_no):
                         row_data[header] = str(value).strip()
 
                 # =====================================================
+                # IMPORTANT: SUBJECT_TEXT is Google Sheet Column N
+                # Column N = index 13 (0-based).  Do NOT depend only
+                # on the header name, because hidden spaces / renamed
+                # headers can make SUBJECT_TEXT lookup fail.
+                # =====================================================
+                if len(padded_row) > 13:
+                    subject_by_column_n = str(padded_row[13]).strip()
+                    row_data["SUBJECT_TEXT"] = subject_by_column_n
+                    row_data["SUBJECT"] = subject_by_column_n
+                    row_data["SUBJECT_BY_COLUMN_N"] = subject_by_column_n
+
+                # =====================================================
                 # DEBUG SUBJECT
                 # =====================================================
                 print("=" * 70)
@@ -633,11 +645,15 @@ def export_to_printed_form(doc_no):
         # =========================================================
         # 📌 1. SUBJECT
         # Google Sheet: SUBJECT_TEXT
-        # Excel Template: D12:Q15
+        # Excel Template: D12:Q14
         # =========================================================
 
         # ใช้ SUBJECT_TEXT เป็นหลัก
         subj_val = str(doc_data.get("SUBJECT_TEXT", "") or "").strip()
+
+        # Fallback: Google Sheet Column N โดยตรง
+        if not subj_val:
+            subj_val = str(doc_data.get("SUBJECT_BY_COLUMN_N", "") or "").strip()
 
         # Fallback สำหรับข้อมูลเก่าที่อาจใช้ชื่อ SUBJECT
         if not subj_val:
@@ -646,6 +662,10 @@ def export_to_printed_form(doc_no):
         # Fallback เพิ่มเติม เผื่อ Header มีรูปแบบ SUBJECTTEXT
         if not subj_val:
             subj_val = str(doc_data.get("SUBJECTTEXT", "") or "").strip()
+
+        # Fallback สำหรับ raw list ที่ถูกแปลงเป็น COL_13
+        if not subj_val:
+            subj_val = str(doc_data.get("COL_13", "") or "").strip()
 
         print("=" * 70)
         print("📌 EXPORT SUBJECT")
@@ -673,7 +693,10 @@ def export_to_printed_form(doc_no):
             ws.unmerge_cells(subject_merge)
 
         # เขียน Subject
+        print("📄 TEMPLATE SUBJECT MERGE:", subject_merge)
+        print("📄 EXCEL D12 BEFORE:", repr(ws["D12"].value))
         ws["D12"] = subj_val
+        print("📄 EXCEL D12 AFTER :", repr(ws["D12"].value))
 
         # จัดรูปแบบข้อความ
         ws["D12"].alignment = openpyxl.styles.Alignment(
