@@ -482,19 +482,34 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
-        # 📌 1. FIX SUBJECT: ค้นหาค่าแบบ Case-Insensitive และเขียนลง D12 ตรงๆ
+        # 📌 FIX SUBJECT: Unmerge -> Write Value -> Re-merge
         subj_val = ""
         for k, v in doc_data.items():
-            if str(k).upper().replace("_", "").replace(" ", "") in ["SUBJECTTEXT", "SUBJECT", "SUBJECTDETAIL"]:
+            clean_k = str(k).upper().replace("_", "").replace(" ", "")
+            if clean_k in ["SUBJECTTEXT", "SUBJECT", "SUBJECTDETAIL"]:
                 if v and str(v).strip():
                     subj_val = str(v).strip()
                     break
 
-        # บังคับลงค่าที่เซลล์ D12 (Top-Left Cell ของกรอบ Subject)
-        cell_d12 = ws["D12"]
-        cell_d12.value = subj_val
-        cell_d12.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
-        
+        # 1. ยกเลิกการผสานเซลล์บริเวณ Subject ชั่วคราว (ครอบคลุมทั้ง D12:Q14 และ D12:Q15)
+        try:
+            ws.unmerge_cells("D12:Q15")
+        except Exception:
+            try:
+                ws.unmerge_cells("D12:Q14")
+            except Exception:
+                pass
+
+        # 2. บังคับเขียนค่าลงเซลล์ D12 โดยตรง
+        ws["D12"].value = str(subj_val)
+
+        # 3. รวมเซลล์กลับคืน และตั้งค่าจัดรูปแบบข้อความ
+        ws.merge_cells("D12:Q15")
+        ws["D12"].alignment = openpyxl.styles.Alignment(
+            wrap_text=True, 
+            vertical="top", 
+            horizontal="left"
+        )
         # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA15
         img_base64 = doc_data.get("IMAGE_BASE64", "") or doc_data.get("IMAGE", "")
         if img_base64:
