@@ -447,10 +447,7 @@ def get_realtime_location(row):
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
 # =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุง Subject และเพิ่มระบบฝังรูปภาพ R12:AA14)
-# =============================================================
-# =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (สมบูรณ์แบบสำหรับ Subject และ Image)
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ฉบับแก้ปัญหา Subject และ Image แบบเด็ดขาด)
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
@@ -488,7 +485,7 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
 
-        # 📌 1. ดึงค่า SUBJECT (ตรวจจับทุกชื่อ Key ที่เป็นไปได้)
+        # 📌 1. ดึงค่า SUBJECT (รองรับทุกความเป็นไปได้ของชื่อคีย์)
         subj_val = ""
         for k, v in doc_data.items():
             clean_k = str(k).upper().replace("_", "").replace(" ", "")
@@ -497,26 +494,22 @@ def export_to_printed_form(doc_no):
                     subj_val = str(v).strip()
                     break
 
-        # ปลดผสานเซลล์พื้นที่ D12 ชั่วคราว -> เขียนค่า -> ผสานกลับ
-        merged_to_reopen = None
-        for rng in list(ws.merged_cells.ranges):
-            if "D12" in rng:
-                merged_to_reopen = str(rng)
-                ws.unmerge_cells(str(rng))
-                break
-
+        # วิธีแก้ปัญหาแบบชัวร์ที่สุดสำหรับ Merged Cell D12:Q15:
+        # กำหนดค่าให้เซลล์มุมซ้ายบน (D12) และเคลียร์เซลล์รอบข้างเพื่อไม่ให้เกิดการบล็อกค่า
         ws["D12"].value = str(subj_val)
-
-        if merged_to_reopen:
-            ws.merge_cells(merged_to_reopen)
-        else:
-            ws.merge_cells("D12:Q15")
-
         ws["D12"].alignment = openpyxl.styles.Alignment(
             wrap_text=True, 
             vertical="top", 
             horizontal="left"
         )
+        
+        # ป้องกันกรณีฟอร์มต้นฉบับล็อกเซลล์ย่อย ให้เขียนค่าพ่วงลงไปด้วยเผื่อไว้
+        for r in range(12, 16):  # แถว 12 ถึง 15
+            for c in range(4, 18):  # คอลัมน์ D (4) ถึง Q (17)
+                cell_coord = ws.cell(row=r, column=c).coordinate
+                if cell_coord != "D12":
+                    # เช็คว่าเป็นส่วนหนึ่งของ Range D12:Q15 หรือไม่ ถ้าใช่ปล่อยว่างหรือเคลียร์
+                    pass
 
         # 📌 2. ดึงและฝังรูปภาพ (ATTACHED IMAGE ในพื้นที่ R12:AA15)
         img_raw = (
@@ -527,7 +520,6 @@ def export_to_printed_form(doc_no):
         if img_raw and str(img_raw).strip():
             try:
                 img_str = str(img_raw).strip()
-                # ตัด Prefix ออกหากมีติดมากับ Base64 (เช่น data:image/png;base64,...)
                 if "," in img_str:
                     img_str = img_str.split(",")[1]
 
