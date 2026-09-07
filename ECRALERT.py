@@ -459,7 +459,7 @@ def export_to_printed_form(doc_no):
         
         def write_cell(coordinate, value):
             target_cell = ws[coordinate]
-            # ตรวจสอบว่าเป็น Merged Cell หรือไม่ หากใช่ให้เขียนลง Top-Left Cell
+            # ค้นหา Top-Left เซลล์กรณีเป็น Merged Cells
             for merged_range in ws.merged_cells.ranges:
                 if target_cell.coordinate in merged_range:
                     top_left = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
@@ -482,19 +482,21 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
-        # 📌 1. FIX SUBJECT TEXT (ดึงทุก Key ที่เป็นไปได้ + บังคับเขียนลง Merged Cell D12)
-        subj_val = (
-            doc_data.get("SUBJECT_TEXT") or 
-            doc_data.get("SUBJECT") or 
-            doc_data.get("SUBJECT_DETAIL") or ""
-        )
+        # 📌 1. FIX SUBJECT: ค้นหาค่าแบบ Case-Insensitive และเขียนลง D12 ตรงๆ
+        subj_val = ""
+        for k, v in doc_data.items():
+            if str(k).upper().replace("_", "").replace(" ", "") in ["SUBJECTTEXT", "SUBJECT", "SUBJECTDETAIL"]:
+                if v and str(v).strip():
+                    subj_val = str(v).strip()
+                    break
+
+        # บังคับลงค่าที่เซลล์ D12 (Top-Left Cell ของกรอบ Subject)
+        cell_d12 = ws["D12"]
+        cell_d12.value = subj_val
+        cell_d12.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
         
-        # บังคับเขียนค่าตรงลง Top-Left ของพื้นที่ D12:Q14
-        subj_cell = write_cell("D12", str(subj_val))
-        subj_cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
-        
-        # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA14
-        img_base64 = doc_data.get("IMAGE_BASE64", "")
+        # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA15
+        img_base64 = doc_data.get("IMAGE_BASE64", "") or doc_data.get("IMAGE", "")
         if img_base64:
             pil_img = base64_to_image(img_base64)
             if pil_img:
@@ -503,8 +505,8 @@ def export_to_printed_form(doc_no):
                 img_bytes.seek(0)
                 
                 xl_img = OpenpyxlImage(img_bytes)
-                xl_img.width = 300
-                xl_img.height = 100
+                xl_img.width = 280
+                xl_img.height = 95
                 ws.add_image(xl_img, "R12")
         
         # เครื่องหมายถูก Checkbox
@@ -923,19 +925,21 @@ else:
                 if not doc_no_val:
                     st.error("❌ กรุณาระบุ DOCUMENT NO.")
                 else:
-                    save_data = {
-                        "DOCUMENT_NO": doc_no_val,
-                        "CUSTOMER_NAME": customer_name,
-                        "PART_NAME": part_name,
-                        "PART_NO": part_no,
-                        "MODEL": model,
-                        "MASTER_DWG_NO": master_dwg_no,
-                        "DATE": str(issue_date),
-                        "REF_DOC_NO": ref_doc_no,
-                        "ISSUE_BY": issue_by,
-                        "SUBJECT_TEXT": subject_text,
-                        "IMAGE_BASE64": image_base64_str
-                    }
+                    # ค้นหาบรรทัด save_data ในส่วนการกดปุ่มบันทึก แล้วปรับให้ส่งทั้ง SUBJECT_TEXT และ SUBJECT
+save_data = {
+    "DOCUMENT_NO": doc_no_val,
+    "CUSTOMER_NAME": customer_name,
+    "PART_NAME": part_name,
+    "PART_NO": part_no,
+    "MODEL": model,
+    "MASTER_DWG_NO": master_dwg_no,
+    "DATE": str(issue_date),
+    "REF_DOC_NO": ref_doc_no,
+    "ISSUE_BY": issue_by,
+    "SUBJECT_TEXT": subject_text,
+    "SUBJECT": subject_text,  # 📌 เพิ่ม Key นี้รองรับกรณีตาราง Google Sheet ใช้ชื่อ SUBJECT
+    "IMAGE_BASE64": image_base64_str
+}
                     save_data.update(checklist_results)
 
                     if save_to_excel(save_data):
