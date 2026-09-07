@@ -1,18 +1,21 @@
-import base64
-from datetime import date
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-import io
 import os
+import io
 import smtplib
-
-google_oauth2 = service_account  # จาก google.oauth2 import service_account
-import gspread
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 import pandas as pd
-from PIL import Image, Image as PILImage  # 👈 เพิ่ม PILImage ตรงนี้
 import streamlit as st
+from datetime import date
+from PIL import Image, Image as PILImage
+import gspread
+
+# 📌 แก้ไขจุดนี้: อิมพอร์ต service_account ให้ถูกต้อง
+from google.oauth2 import service_account
+
+# หลังจากอิมพอร์ตแล้ว สามารถเรียกใช้แบบนี้ได้เลยโดยไม่เกิด Error
+# crecs = service_account.Credentials.from_service_account_file(...)
 
 # =============================================================
 # 🖼️ BASE64 IMAGE CONVERSION & RESIZE
