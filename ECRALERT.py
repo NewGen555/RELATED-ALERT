@@ -979,7 +979,7 @@ else:
                                 send_all_completed_alert_email(doc_no, customer, part_name)
                                 st.balloons()
                             st.rerun()
-                     # (ต่อจากเดิม) เติม คอลัมน์ที่ต้องการแสดงในตาราง Dashboard ให้ครบถ้วน
+                     # เติมคอลัมน์ที่ต้องการแสดงในตาราง Dashboard
         show_cols = [
             'DOCUMENT_NO', 'CUSTOMER_NAME', 'PART_NAME', 'MODEL', 
             'ISSUE_BY', 'MAIN_STATUS', 'CURRENT_LOCATION'
@@ -994,7 +994,6 @@ else:
             use_container_width=True,
             hide_index=True
         )
-
 
 # =============================================================
 # 📝 VIEW 2: บันทึก / อนุมัติ เอกสาร (FORM ENTRY & APPROVAL)
@@ -1018,7 +1017,7 @@ elif menu == "📝 บันทึก/อนุมัติ เอกสาร":
             if doc_data:
                 st.markdown("---")
                 # -------------------------------------------------------------
-                # 📥 จุดสำหรับวางปุ่มดาวน์โหลด Excel ในหน้าจัดการเอกสาร
+                # 📥 ปุ่มดาวน์โหลด Excel ในหน้าจัดการเอกสาร
                 # -------------------------------------------------------------
                 st.markdown("### 🖨️ ดาวน์โหลดเอกสาร (Excel Form)")
                 render_download_excel_button(
@@ -1037,4 +1036,4 @@ elif menu == "📝 บันทึก/อนุมัติ เอกสาร":
                 with col_b:
                     st.write(f"**Model:** {doc_data.get('MODEL', '-')}")
                     st.write(f"**Issue By:** {doc_data.get('ISSUE_BY', '-')}")
-                    st.write(f"**Date:** {doc_data.get('DATE', '-')}")       
+                    st.write(f"**Date:** {doc_data.get('DATE', '-')}")     
