@@ -334,8 +334,11 @@ def normalize_data_key(value):
 
 def get_document_data(doc_no):
     """
-    ดึงข้อมูลเอกสารจาก Google Sheets แบบอ่านทุกคอลัมน์
-    โดย normalize header เพื่อป้องกันปัญหา SUBJECT_TEXT ไม่ตรงกัน
+    ดึงข้อมูลเอกสารจาก Google Sheets
+    IMPORTANT:
+    - DOCUMENT_NO ใช้หาแถว
+    - SUBJECT อ่านจาก Column N (index 13) โดยตรง
+    - ไม่พึ่งชื่อ Header สำหรับ SUBJECT
     """
     try:
         ws = get_worksheet()
@@ -344,68 +347,73 @@ def get_document_data(doc_no):
         if not all_rows or len(all_rows) < 2:
             return None
 
-        # แถวแรกคือ Header
         headers = [normalize_header(c) for c in all_rows[0]]
 
-        # หาตำแหน่ง DOCUMENT_NO
-        doc_no_idx = -1
+        # หา DOCUMENT_NO จาก Header
+        doc_no_idx = 0
         for idx, h in enumerate(headers):
             if h in ["DOCUMENT_NO", "DOCUMENTNO", "DOC_NO", "DOCNO"]:
                 doc_no_idx = idx
                 break
 
-        if doc_no_idx == -1:
-            doc_no_idx = 0
-
         search_key = str(doc_no).strip().upper()
 
-        # วนลูปหา Document No.
         for row_number, row in enumerate(all_rows[1:], start=2):
             padded_row = list(row) + [""] * max(0, len(headers) - len(row))
+
+            if doc_no_idx >= len(padded_row):
+                continue
+
             current_doc_no = str(padded_row[doc_no_idx]).strip().upper()
 
-            if current_doc_no == search_key:
-                row_data = {}
+            if current_doc_no != search_key:
+                continue
 
-                for i, header in enumerate(headers):
-                    if header:
-                        value = padded_row[i] if i < len(padded_row) else ""
-                        row_data[header] = str(value).strip()
+            row_data = {}
 
-                # =====================================================
-                # IMPORTANT: SUBJECT_TEXT is Google Sheet Column N
-                # Column N = index 13 (0-based).  Do NOT depend only
-                # on the header name, because hidden spaces / renamed
-                # headers can make SUBJECT_TEXT lookup fail.
-                # =====================================================
-                if len(padded_row) > 13:
-                    subject_by_column_n = str(padded_row[13]).strip()
-                    row_data["SUBJECT_TEXT"] = subject_by_column_n
-                    row_data["SUBJECT"] = subject_by_column_n
-                    row_data["SUBJECT_BY_COLUMN_N"] = subject_by_column_n
+            # อ่านข้อมูลตาม Header
+            for i, header in enumerate(headers):
+                if header:
+                    row_data[header] = str(
+                        padded_row[i] if i < len(padded_row) else ""
+                    ).strip()
 
-                # =====================================================
-                # DEBUG SUBJECT
-                # =====================================================
-                print("=" * 70)
-                print("🔍 GOOGLE SHEET DATA")
-                print("Row             :", row_number)
-                print("DOCUMENT_NO     :", repr(row_data.get("DOCUMENT_NO", "")))
-                print("SUBJECT_TEXT    :", repr(row_data.get("SUBJECT_TEXT", "")))
-                print("SUBJECT         :", repr(row_data.get("SUBJECT", "")))
-                print("SUBJECT LENGTH  :", len(row_data.get("SUBJECT_TEXT", "")))
-                print("ALL KEYS        :", list(row_data.keys()))
-                print("=" * 70)
+            # =====================================================
+            # SUBJECT = GOOGLE SHEET COLUMN N
+            # N = column 14 = zero-based index 13
+            # =====================================================
+            subject_n = ""
+            if len(row) > 13:
+                subject_n = str(row[13]).strip()
 
-                return row_data
+            # เขียนทับด้วยค่าจาก Column N โดยตรง
+            row_data["SUBJECT_TEXT"] = subject_n
+            row_data["SUBJECT"] = subject_n
+            row_data["SUBJECT_BY_COLUMN_N"] = subject_n
+            row_data["COL_13"] = subject_n
 
+            print("=" * 80)
+            print("🔎 GOOGLE SHEET DOCUMENT FOUND")
+            print("ROW NUMBER          :", row_number)
+            print("DOCUMENT_NO         :", repr(current_doc_no))
+            print("TOTAL COLUMNS       :", len(row))
+            print("COLUMN N INDEX      :", 13)
+            print("COLUMN N HEADER     :", repr(
+                all_rows[0][13] if len(all_rows[0]) > 13 else "NO COLUMN N"
+            ))
+            print("COLUMN N SUBJECT    :", repr(subject_n))
+            print("SUBJECT LENGTH      :", len(subject_n))
+            print("=" * 80)
+
+            return row_data
+
+        print(f"❌ DOCUMENT NOT FOUND: {doc_no}")
         return None
 
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาดในการอ่านข้อมูลจาก Google Sheets: {e}")
         print(f"❌ get_document_data ERROR: {type(e).__name__}: {e}")
         return None
-
 
 def get_all_documents():
     try:
@@ -427,9 +435,10 @@ def get_all_documents():
 def save_to_excel(data_dict):
     """
     บันทึก/อัปเดตข้อมูลลง Google Sheets
-    - normalize Header/Key
-    - รองรับ SUBJECT_TEXT โดยตรง
-    - อนุญาตให้แก้ค่าเป็นค่าว่างได้
+
+    IMPORTANT:
+    SUBJECT_TEXT จะถูกบันทึกลง Column N (column 14) โดยตรง
+    เพื่อไม่ให้ปัญหา Header ทำให้ Subject หาย
     """
     try:
         ws = get_worksheet()
@@ -439,68 +448,95 @@ def save_to_excel(data_dict):
             st.error("❌ Google Sheet ยังว่างเปล่า")
             return False
 
-        headers = [normalize_header(h) for h in all_rows[0]]
+        headers_raw = list(all_rows[0])
+        headers = [normalize_header(h) for h in headers_raw]
 
-        # Normalize incoming data
         normalized_data = {}
         for key, value in data_dict.items():
             clean_key = normalize_data_key(key)
             normalized_data[clean_key] = "" if value is None else str(value).strip()
 
         doc_no = normalized_data.get("DOCUMENT_NO", "").strip().upper()
+        if not doc_no:
+            st.error("❌ ไม่มี DOCUMENT_NO")
+            return False
 
-        # หาคอลัมน์ DOCUMENT_NO
-        target_col_idx = 0
+        # หา DOCUMENT_NO column
+        doc_col_idx = 0
         for idx, h in enumerate(headers):
             if h in ["DOCUMENT_NO", "DOCUMENTNO", "DOC_NO", "DOCNO"]:
-                target_col_idx = idx
+                doc_col_idx = idx
                 break
 
-        # ค้นหาแถวเดิม
         row_index = -1
         for r_idx, row in enumerate(all_rows[1:], start=2):
-            if len(row) > target_col_idx:
-                existing_doc_no = str(row[target_col_idx]).strip().upper()
+            if len(row) > doc_col_idx:
+                existing_doc_no = str(row[doc_col_idx]).strip().upper()
                 if existing_doc_no == doc_no:
                     row_index = r_idx
                     break
 
-        if row_index != -1:
-            # =====================================================
-            # UPDATE EXISTING ROW
-            # =====================================================
-            cell_updates = []
-
-            for key, value in normalized_data.items():
-                if key in headers:
-                    col_index = headers.index(key) + 1
-                    cell_updates.append(
-                        gspread.Cell(
-                            row=row_index,
-                            col=col_index,
-                            value=value
-                        )
-                    )
-
-            if cell_updates:
-                ws.update_cells(cell_updates)
-
-            print(f"✅ UPDATE Google Sheet row {row_index}")
-            print("SUBJECT_TEXT SAVED:", repr(normalized_data.get("SUBJECT_TEXT", "")))
-
-        else:
-            # =====================================================
-            # APPEND NEW ROW
-            # =====================================================
+        if row_index == -1:
+            # สร้าง row ใหม่ตามจำนวน header
             new_row = [
                 normalized_data.get(header, "")
                 for header in headers
             ]
 
+            # SUBJECT = Column N โดยตรง
+            if len(new_row) < 14:
+                new_row += [""] * (14 - len(new_row))
+
+            new_row[13] = normalized_data.get("SUBJECT_TEXT", "")
+
             ws.append_row(new_row)
 
             print("✅ APPEND new Google Sheet row")
-            print("SUBJECT_TEXT SAVED:", repr(normalized_data.get("SUBJECT_TEXT", "")))
+            print("DOCUMENT_NO SAVED :", repr(doc_no))
+            print("SUBJECT_TEXT SAVED:", repr(new_row[13]))
+            return True
+
+        # =====================================================
+        # UPDATE EXISTING ROW
+        # =====================================================
+
+        cell_updates = []
+
+        for key, value in normalized_data.items():
+            if key in headers:
+                col_index = headers.index(key) + 1
+
+                cell_updates.append(
+                    gspread.Cell(
+                        row=row_index,
+                        col=col_index,
+                        value=value
+                    )
+                )
+
+        # =====================================================
+        # SUBJECT_TEXT = COLUMN N DIRECTLY
+        # =====================================================
+        subject_value = normalized_data.get("SUBJECT_TEXT", "")
+
+        cell_updates.append(
+            gspread.Cell(
+                row=row_index,
+                col=14,
+                value=subject_value
+            )
+        )
+
+        if cell_updates:
+            ws.update_cells(cell_updates)
+
+        print("=" * 80)
+        print("✅ UPDATE Google Sheet")
+        print("ROW              :", row_index)
+        print("DOCUMENT_NO      :", repr(doc_no))
+        print("SUBJECT -> COL N :", repr(subject_value))
+        print("SUBJECT LENGTH   :", len(subject_value))
+        print("=" * 80)
 
         return True
 
@@ -508,7 +544,6 @@ def save_to_excel(data_dict):
         st.error(f"❌ บันทึกข้อมูลลง Google Sheets ไม่สำเร็จ: {e}")
         print(f"❌ save_to_excel ERROR: {type(e).__name__}: {e}")
         return False
-
 
 def check_yes_items_completed(doc_data):
     if not doc_data:
@@ -644,43 +679,84 @@ def export_to_printed_form(doc_no):
 
         # =========================================================
         # 📌 1. SUBJECT
-        # Google Sheet: SUBJECT_TEXT
-        # Excel Template: D12:Q14
+        # Google Sheet Column N -> Excel D12
         # =========================================================
 
-        # ใช้ SUBJECT_TEXT เป็นหลัก
-        subj_val = str(doc_data.get("SUBJECT_TEXT", "") or "").strip()
+        # เริ่มจาก doc_data
+        subj_val = str(
+            doc_data.get("SUBJECT_TEXT", "")
+            or doc_data.get("SUBJECT_BY_COLUMN_N", "")
+            or doc_data.get("SUBJECT", "")
+            or doc_data.get("SUBJECTTEXT", "")
+            or doc_data.get("COL_13", "")
+            or ""
+        ).strip()
 
-        # Fallback: Google Sheet Column N โดยตรง
+        # =========================================================
+        # ULTIMATE FALLBACK:
+        # อ่าน Google Sheet ใหม่ และหา Column N โดยตรง
+        # =========================================================
         if not subj_val:
-            subj_val = str(doc_data.get("SUBJECT_BY_COLUMN_N", "") or "").strip()
+            try:
+                direct_ws = get_worksheet()
+                direct_rows = direct_ws.get_all_values()
 
-        # Fallback สำหรับข้อมูลเก่าที่อาจใช้ชื่อ SUBJECT
-        if not subj_val:
-            subj_val = str(doc_data.get("SUBJECT", "") or "").strip()
+                if direct_rows:
+                    direct_headers = [
+                        normalize_header(x) for x in direct_rows[0]
+                    ]
 
-        # Fallback เพิ่มเติม เผื่อ Header มีรูปแบบ SUBJECTTEXT
-        if not subj_val:
-            subj_val = str(doc_data.get("SUBJECTTEXT", "") or "").strip()
+                    direct_doc_idx = 0
+                    for idx, h in enumerate(direct_headers):
+                        if h in [
+                            "DOCUMENT_NO",
+                            "DOCUMENTNO",
+                            "DOC_NO",
+                            "DOCNO"
+                        ]:
+                            direct_doc_idx = idx
+                            break
 
-        # Fallback สำหรับ raw list ที่ถูกแปลงเป็น COL_13
-        if not subj_val:
-            subj_val = str(doc_data.get("COL_13", "") or "").strip()
+                    for direct_row in direct_rows[1:]:
+                        if len(direct_row) <= direct_doc_idx:
+                            continue
 
-        print("=" * 70)
+                        direct_doc = str(
+                            direct_row[direct_doc_idx]
+                        ).strip().upper()
+
+                        if direct_doc == str(doc_no).strip().upper():
+                            if len(direct_row) > 13:
+                                subj_val = str(
+                                    direct_row[13]
+                                ).strip()
+                            break
+
+                print(
+                    "🔎 DIRECT EXPORT SUBJECT =",
+                    repr(subj_val)
+                )
+
+            except Exception as direct_err:
+                print(
+                    "❌ DIRECT EXPORT SUBJECT ERROR:",
+                    type(direct_err).__name__,
+                    str(direct_err)
+                )
+
+        print("=" * 80)
         print("📌 EXPORT SUBJECT")
         print("DOCUMENT NO :", repr(doc_no))
         print("SUBJECT     :", repr(subj_val))
         print("LENGTH      :", len(subj_val))
-        print("=" * 70)
+        print("=" * 80)
 
         # =========================================================
-        # จัดการ Merge Cell ของพื้นที่ Subject อย่างปลอดภัย
+        # Template จริง = D12:Q14
         # =========================================================
         subject_merge = None
 
         for rng in list(ws.merged_cells.ranges):
-            # ตรวจว่า merged range ครอบคลุม cell D12 หรือไม่
             if (
                 rng.min_row <= 12 <= rng.max_row
                 and rng.min_col <= 4 <= rng.max_col
@@ -688,30 +764,32 @@ def export_to_printed_form(doc_no):
                 subject_merge = str(rng)
                 break
 
-        # Unmerge ก่อนเขียนค่า
+        print("📄 TEMPLATE SUBJECT MERGE:", subject_merge)
+        print("📄 EXCEL D12 BEFORE:", repr(ws["D12"].value))
+
         if subject_merge:
             ws.unmerge_cells(subject_merge)
 
-        # เขียน Subject
-        print("📄 TEMPLATE SUBJECT MERGE:", subject_merge)
-        print("📄 EXCEL D12 BEFORE:", repr(ws["D12"].value))
+        # เขียนตรง D12
         ws["D12"] = subj_val
-        print("📄 EXCEL D12 AFTER :", repr(ws["D12"].value))
 
-        # จัดรูปแบบข้อความ
         ws["D12"].alignment = openpyxl.styles.Alignment(
             wrap_text=True,
             vertical="top",
             horizontal="left"
         )
 
-        # ถ้ามี Merge เดิม ให้ Merge กลับ
+        print("📄 EXCEL D12 AFTER:", repr(ws["D12"].value))
+
+        # Merge กลับตาม Template เดิม
         if subject_merge:
             ws.merge_cells(subject_merge)
         else:
-            ws.merge_cells("D12:Q15")
+            ws.merge_cells("D12:Q14")
 
-        print(f"✅ SUBJECT เขียนลง Excel: D12 = {repr(subj_val)}")
+        print("📄 EXCEL D12 FINAL:", repr(ws["D12"].value))
+
+        # =========================================================
 
         # 📌 2. ดึงและฝังรูปภาพ (ATTACHED IMAGE ในพื้นที่ R12:AA15)
         img_raw = get_val("IMAGE_BASE64", "IMAGE", "IMAGE_DATA", "IMG", "SUBJECT_IMAGE_PATH")
