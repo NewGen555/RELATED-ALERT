@@ -459,15 +459,14 @@ def export_to_printed_form(doc_no):
         
         def write_cell(coordinate, value):
             target_cell = ws[coordinate]
-            # ค้นหา Top-Left เซลล์กรณีเป็น Merged Cells
-            for merged_range in ws.merged_cells.ranges:
+            for merged_range in list(ws.merged_cells.ranges):
                 if target_cell.coordinate in merged_range:
                     top_left = ws.cell(row=merged_range.min_row, column=merged_range.min_col)
                     top_left.value = value
                     return top_left
             target_cell.value = value
             return target_cell
-        
+
         # เขียนข้อมูล Header หลัก
         write_cell("D3", doc_data.get("PART_NAME", ""))
         write_cell("D4", doc_data.get("PART_NO", ""))
@@ -481,36 +480,37 @@ def export_to_printed_form(doc_no):
         write_cell("W7", doc_data.get("EFF_EVENT", ""))
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
-        
-        # 📌 FIX SUBJECT: Unmerge -> Write Value -> Re-merge
+
+        # 📌 1. ดึงค่า SUBJECT จากทุก Key ที่มีคำว่า SUBJECT ในชื่อคอลัมน์
         subj_val = ""
         for k, v in doc_data.items():
-            clean_k = str(k).upper().replace("_", "").replace(" ", "")
-            if clean_k in ["SUBJECTTEXT", "SUBJECT", "SUBJECTDETAIL"]:
+            if "SUBJECT" in str(k).upper():
                 if v and str(v).strip():
                     subj_val = str(v).strip()
                     break
 
-        # 1. ยกเลิกการผสานเซลล์บริเวณ Subject ชั่วคราว (ครอบคลุมทั้ง D12:Q14 และ D12:Q15)
-        try:
-            ws.unmerge_cells("D12:Q15")
-        except Exception:
-            try:
-                ws.unmerge_cells("D12:Q14")
-            except Exception:
-                pass
+        # 📌 2. ปลดผสานเซลล์พื้นที่ D12:Q15 ชั่วคราว -> เขียนค่าลง D12 -> รวมเซลล์กลับ
+        merged_to_reopen = None
+        for rng in list(ws.merged_cells.ranges):
+            if "D12" in rng:
+                merged_to_reopen = str(rng)
+                ws.unmerge_cells(str(rng))
+                break
 
-        # 2. บังคับเขียนค่าลงเซลล์ D12 โดยตรง
         ws["D12"].value = str(subj_val)
 
-        # 3. รวมเซลล์กลับคืน และตั้งค่าจัดรูปแบบข้อความ
-        ws.merge_cells("D12:Q15")
+        if merged_to_reopen:
+            ws.merge_cells(merged_to_reopen)
+        else:
+            ws.merge_cells("D12:Q15")
+
         ws["D12"].alignment = openpyxl.styles.Alignment(
             wrap_text=True, 
             vertical="top", 
             horizontal="left"
         )
-        # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA15
+
+        # 📌 3. ATTACHED IMAGE (พื้นที่ R12:AA15)
         img_base64 = doc_data.get("IMAGE_BASE64", "") or doc_data.get("IMAGE", "")
         if img_base64:
             pil_img = base64_to_image(img_base64)
@@ -523,7 +523,7 @@ def export_to_printed_form(doc_no):
                 xl_img.width = 280
                 xl_img.height = 95
                 ws.add_image(xl_img, "R12")
-        
+
         # เครื่องหมายถูก Checkbox
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
         write_cell("I13", "✓" if doc_data.get("ATTACH_ECI") == "YES" else "")
