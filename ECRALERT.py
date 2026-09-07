@@ -509,7 +509,7 @@ def export_to_printed_form(doc_no):
         write_cell("W9", get_val("EFF_ACTUAL", "ACTUAL"))
 
         # 📌 1. ดึงค่า SUBJECT (รองรับชื่อคอลัมน์หลากหลายรูปแบบมากขึ้น)
-        subj_val = get_val("SUBJECT_TEXT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION", "DETAIL OF CHANGE", "REASON", "SUBJECT OF CHANGE")
+        subj_val = get_val("SUBJECT_TEXT", "SUBJECT", "DETAILS", "DETAIL", "DESC", "DESCRIPTION")
         print(f"📌 ค่า Subject ที่ดึงมาแสดงผล: '{subj_val}'")
 
         # แก้ปัญหา Merged Cell D12:Q15
