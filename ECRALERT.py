@@ -19,22 +19,15 @@ def convert_image_to_base64(uploaded_file, max_size=(600, 600), quality=60):
     """ย่อขนาดและบีบอัดรูปภาพก่อนแปลงเป็น Base64 เพื่อไม่ให้เกิน 50,000 ตัวอักษรใน Google Sheets"""
     if uploaded_file is not None:
         try:
-            # 1. เปิดรูปภาพด้วย PIL
             img = Image.open(uploaded_file)
-            
-            # แปลงโหมดภาพเป็น RGB กรณีรูปเดิมเป็น RGBA (PNG)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-            
-            # 2. ย่อขนาดไม่ให้เกิน 600x600 px
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             
-            # 3. บีบอัดไฟล์ลง Memory Buffer
             buffer = io.BytesIO()
             img.save(buffer, format="JPEG", quality=quality, optimize=True)
             bytes_data = buffer.getvalue()
             
-            # 4. แปลงเป็น Base64 String
             base64_str = base64.b64encode(bytes_data).decode()
             return f"data:image/jpeg;base64,{base64_str}"
         except Exception as e:
@@ -439,7 +432,7 @@ def get_realtime_location(row):
     return "🔵 กำลังดำเนินการ", "อยู่ที่แผนก: PDD (รอยืนยันส่งต่อ Manager)", "ENGINEER"
 
 # =============================================================
-# 🖨️ EXPORT TO EXCEL TEMPLATE FORM
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุงสัญลักษณ์เป็น ✓ และเว้นว่างถ้าไม่มีข้อมูล)
 # =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
@@ -476,25 +469,31 @@ def export_to_printed_form(doc_no):
         
         write_cell("D12", doc_data.get("SUBJECT_TEXT", ""))
         
-        write_cell("I12", "X" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
-        write_cell("I13", "X" if doc_data.get("ATTACH_ECI") == "YES" else "")
-        write_cell("I14", "X" if doc_data.get("ATTACH_MEETING") == "YES" else "")
-        write_cell("I15", f"X ({doc_data.get('ATTACH_OTHERS_DETAIL', '')})" if doc_data.get("ATTACH_OTHERS") == "YES" else "")
+        # เปลี่ยน X เป็น ✓ เฉพาะรายการที่มีการเลือกไว้
+        write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
+        write_cell("I13", "✓" if doc_data.get("ATTACH_ECI") == "YES" else "")
+        write_cell("I14", "✓" if doc_data.get("ATTACH_MEETING") == "YES" else "")
+        write_cell("I15", f"✓ ({doc_data.get('ATTACH_OTHERS_DETAIL', '')})" if doc_data.get("ATTACH_OTHERS") == "YES" else "")
 
         judgement_val = doc_data.get("JUDGEMENT", "")
-        write_cell("S13", "X" if judgement_val == "FEASIBLE" else "")
-        write_cell("S14", "X" if judgement_val == "IMPROBABILITY" else "")
+        write_cell("S13", "✓" if judgement_val == "FEASIBLE" else "")
+        write_cell("S14", "✓" if judgement_val == "IMPROBABILITY" else "")
 
         start_row = 19
         for i in range(1, 20):
             current_row = start_row + (i - 1)
-            rev_val = get_doc_value(doc_data, i, "REVISE")
-            if str(rev_val).upper() == "YES":
-                write_cell(f"K{current_row}", "X")
+            rev_val = str(get_doc_value(doc_data, i, "REVISE")).upper().strip()
+            
+            # ถ้าแผนกยังไม่ได้ลงข้อมูล หรือไม่ได้ระบุ จะปล่อยว่างไว้ทั้งหมด (ไม่ติ๊กถูกใดๆ)
+            if rev_val == "YES":
+                write_cell(f"K{current_row}", "✓")
                 write_cell(f"M{current_row}", "")
+            elif rev_val == "NO":
+                write_cell(f"K{current_row}", "")
+                write_cell(f"M{current_row}", "✓")
             else:
                 write_cell(f"K{current_row}", "")
-                write_cell(f"M{current_row}", "X")
+                write_cell(f"M{current_row}", "")
                 
             write_cell(f"O{current_row}", get_doc_value(doc_data, i, "RESP"))
             write_cell(f"U{current_row}", get_doc_value(doc_data, i, "PLAN"))
@@ -587,7 +586,6 @@ if menu == "📊 Dashboard ติดตามสถานะ Realtime":
                 </div>
                 """, unsafe_allow_html=True)
 
-                # 🟢 ปุ่มดาวน์โหลดเอกสารทันทีโดยไม่ต้องรออนุมัติ
                 st.markdown("##### 📥 **ดาวน์โหลดเอกสารฟอร์มจริง (ไม่ต้องรอ Manager อนุมัติ):**")
                 render_download_excel_button(doc_search_input)
 
@@ -675,7 +673,6 @@ if menu == "📊 Dashboard ติดตามสถานะ Realtime":
             hide_index=True
         )
 
-        # 🟢 เพิ่มส่วนดาวน์โหลดด่วนใต้ตาราง
         st.markdown("##### 📥 **ดาวน์โหลดฟอร์ม Excel ด่วนจากตาราง:**")
         quick_doc = st.selectbox("เลือกเลขที่เอกสารที่ต้องการโหลด Excel:", ["-"] + list(display_df['DOCUMENT_NO'].unique()))
         if quick_doc != "-":
@@ -718,7 +715,6 @@ else:
         if doc_no:
             existing_data = get_document_data(doc_no) or {}
 
-            # 🟢 ปุ่มดาวน์โหลดเอกสาร Excel ฟอร์มจริงทันที
             if existing_data:
                 st.info(f"📄 **เอกสารในระบบ:** {doc_no} (Customer: {existing_data.get('CUSTOMER_NAME', '-')}, Part: {existing_data.get('PART_NAME', '-')})")
                 render_download_excel_button(doc_no, "📥 โหลดเอกสาร Excel ฟอร์มจริง ณ ปัจจุบัน (ไม่ต้องรอ Manager อนุมัติ)")
@@ -837,6 +833,15 @@ else:
                     st.subheader("2. เหตุผลและรายละเอียดการเปลี่ยนแปลง (Subject / Reason)")
                     subject_text = st.text_area("SUBJECT / DETAILS", value=existing_data.get("SUBJECT_TEXT", ""), height=100)
 
+                    uploaded_subject_img = st.file_uploader("📷 อัปโหลดรูปภาพแนบประกอบ Subject / Details", type=["png", "jpg", "jpeg"], key="img_file_subject")
+                    
+                    subject_img_base64 = existing_data.get("SUBJECT_IMAGE", "")
+                    if uploaded_subject_img is not None:
+                        subject_img_base64 = convert_image_to_base64(uploaded_subject_img)
+
+                    if subject_img_base64 and str(subject_img_base64).startswith("data:image"):
+                        st.image(subject_img_base64, caption="รูปภาพแนบประกอบ Subject / Details", width=400)
+
                     st.markdown("---")
                     st.subheader("3. เอกสารแนบ (Attachment)")
                     att_col1, att_col2 = st.columns(2)
@@ -850,10 +855,15 @@ else:
 
                     st.markdown("---")
                     st.subheader("4. การประเมินความพร้อม (Feasibility Judgement)")
+                    
+                    curr_judgement = existing_data.get("JUDGEMENT", "")
+                    judgement_opts = ["FEASIBLE", "IMPROBABILITY"]
+                    judgement_idx = judgement_opts.index(curr_judgement) if curr_judgement in judgement_opts else 0
+                    
                     judgement = st.radio(
                         "JUDGEMENT RESULT:",
-                        ["FEASIBLE", "IMPROBABILITY"],
-                        index=0 if existing_data.get("JUDGEMENT") != "IMPROBABILITY" else 1
+                        judgement_opts,
+                        index=judgement_idx
                     )
 
                     st.markdown("---")
@@ -870,6 +880,7 @@ else:
                         "ISSUE_BY": issue_by,
                         "DATE": issue_date.strftime("%Y-%m-%d"),
                         "SUBJECT_TEXT": subject_text,
+                        "SUBJECT_IMAGE": subject_img_base64,
                         "ATTACH_DRAWING": "YES" if att_dwg else "NO",
                         "ATTACH_ECI": "YES" if att_eci else "NO",
                         "ATTACH_MEETING": "YES" if att_meeting else "NO",
@@ -880,23 +891,30 @@ else:
 
                     for i in range(1, 20):
                         dept_owner, title = ITEM_DEPT_MAPPING.get(i, ("-", "-"))
-
-                        # อนุญาตให้แก้ไขได้เฉพาะข้อที่เป็นของแผนกตนเอง หรือ PDD
                         can_edit = ("PDD" in selected_dept) or (dept_owner in selected_dept)
 
                         with st.expander(f"ข้อ {i}. [{dept_owner}] {title}", expanded=can_edit):
                             col_a, col_b, col_c, col_d = st.columns([1, 1, 1, 2])
 
-                            curr_rev = get_doc_value(existing_data, i, "REVISE")
+                            curr_rev = str(get_doc_value(existing_data, i, "REVISE")).upper().strip()
                             curr_resp = get_doc_value(existing_data, i, "RESP")
                             curr_plan = get_doc_value(existing_data, i, "PLAN")
                             curr_close = get_doc_value(existing_data, i, "CLOSE")
 
+                            # ปรับ index เริ่มต้น: ถ้าเป็นค่าว่างให้เลือก "-" (ไม่ติ๊กอะไรในเอกสาร)
+                            opts = ["YES", "NO", "-"]
+                            if curr_rev == "YES":
+                                rev_idx = 0
+                            elif curr_rev == "NO":
+                                rev_idx = 1
+                            else:
+                                rev_idx = 2
+
                             with col_a:
                                 rev_val = st.radio(
                                     f"แก้ไข? (#{i})",
-                                    ["YES", "NO"],
-                                    index=0 if curr_rev.upper() == "YES" else 1,
+                                    opts,
+                                    index=rev_idx,
                                     key=f"rev_{i}",
                                     disabled=not can_edit
                                 )
@@ -907,16 +925,12 @@ else:
                             with col_d:
                                 close_val = st.text_input(f"วันปิดงานจริง Actual Close (#{i})", value=curr_close, key=f"close_{i}", disabled=not can_edit)
 
-                            # ส่วนการอัปโหลดและแสดงรูปภาพ
                             uploaded_img = st.file_uploader(f"📷 อัปโหลดรูปภาพแนบประกอบข้อ {i}", type=["png", "jpg", "jpeg"], key=f"img_file_{i}", disabled=not can_edit)
                             
                             img_base64 = get_doc_value(existing_data, i, "IMAGE")
-                            
-                            # ถ้ามีการอัปโหลดภาพใหม่เข้ามา ให้ย่อขนาดและแปลงเป็น Base64
                             if uploaded_img is not None:
                                 img_base64 = convert_image_to_base64(uploaded_img)
 
-                            # แสดงพรีวิวรูปภาพ
                             if img_base64 and img_base64.startswith("data:image"):
                                 st.image(img_base64, caption=f"รูปภาพแนบประกอบข้อ {i}", width=300)
 
@@ -933,7 +947,6 @@ else:
                         if save_to_excel(form_data):
                             st.success("✅ บันทึกข้อมูลสำเร็จเรียบร้อยแล้ว!")
                             
-                            # ดึงข้อมูลล่าสุดเช็กว่าปิดข้อ YES ครบถ้วนหรือยัง
                             updated_doc = get_document_data(doc_no)
                             is_completed, _ = check_yes_items_completed(updated_doc)
                             if is_completed:
