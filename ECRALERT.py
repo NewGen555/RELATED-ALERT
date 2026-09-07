@@ -1,17 +1,18 @@
-import os
-import io
-import smtplib
-from email.mime.text import MIMEText
+import base64
+from datetime import date
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import io
+import os
+import smtplib
+
+google_oauth2 = service_account  # จาก google.oauth2 import service_account
+import gspread
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 import pandas as pd
+from PIL import Image, Image as PILImage  # 👈 เพิ่ม PILImage ตรงนี้
 import streamlit as st
-from datetime import date
-from PIL import Image
-import gspread
-from google.oauth2 import service_account
-import base64
 
 # =============================================================
 # 🖼️ BASE64 IMAGE CONVERSION & RESIZE
