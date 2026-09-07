@@ -445,6 +445,9 @@ def get_realtime_location(row):
 # =============================================================
 # 🖨️ EXPORT TO EXCEL TEMPLATE FORM (ปรับปรุง Subject และเพิ่มระบบฝังรูปภาพ R12:AA14)
 # =============================================================
+# =============================================================
+# 🖨️ EXPORT TO EXCEL TEMPLATE FORM (สมบูรณ์แบบสำหรับ Subject และ Image)
+# =============================================================
 def export_to_printed_form(doc_no):
     if not os.path.exists(TEMPLATE_FILE):
         return None, f"❌ ไม่พบไฟล์แบบฟอร์มต้นฉบับ '{TEMPLATE_FILE}' ในโฟลเดอร์โปรเจกต์"
@@ -481,15 +484,16 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
 
-        # 📌 1. ดึงค่า SUBJECT จากทุก Key ที่มีคำว่า SUBJECT ในชื่อคอลัมน์
+        # 📌 1. ดึงค่า SUBJECT (ตรวจจับทุกชื่อ Key ที่เป็นไปได้)
         subj_val = ""
         for k, v in doc_data.items():
-            if "SUBJECT" in str(k).upper():
-                if v and str(v).strip():
+            clean_k = str(k).upper().replace("_", "").replace(" ", "")
+            if any(x in clean_k for x in ["SUBJECT", "DETAILS", "DETAIL"]):
+                if v and str(v).strip() and str(v).strip().lower() != "none":
                     subj_val = str(v).strip()
                     break
 
-        # 📌 2. ปลดผสานเซลล์พื้นที่ D12:Q15 ชั่วคราว -> เขียนค่าลง D12 -> รวมเซลล์กลับ
+        # ปลดผสานเซลล์พื้นที่ D12 ชั่วคราว -> เขียนค่า -> ผสานกลับ
         merged_to_reopen = None
         for rng in list(ws.merged_cells.ranges):
             if "D12" in rng:
@@ -510,11 +514,22 @@ def export_to_printed_form(doc_no):
             horizontal="left"
         )
 
-        # 📌 3. ATTACHED IMAGE (พื้นที่ R12:AA15)
-        img_base64 = doc_data.get("IMAGE_BASE64", "") or doc_data.get("IMAGE", "")
-        if img_base64:
-            pil_img = base64_to_image(img_base64)
-            if pil_img:
+        # 📌 2. ดึงและฝังรูปภาพ (ATTACHED IMAGE ในพื้นที่ R12:AA15)
+        img_raw = (
+            doc_data.get("IMAGE_BASE64") or 
+            doc_data.get("IMAGE") or 
+            doc_data.get("IMAGE_DATA") or ""
+        )
+        if img_raw and str(img_raw).strip():
+            try:
+                img_str = str(img_raw).strip()
+                # ตัด Prefix ออกหากมีติดมากับ Base64 (เช่น data:image/png;base64,...)
+                if "," in img_str:
+                    img_str = img_str.split(",")[1]
+
+                img_bytes_data = base64.b64decode(img_str)
+                pil_img = PILImage.open(io.BytesIO(img_bytes_data))
+
                 img_bytes = io.BytesIO()
                 pil_img.save(img_bytes, format='PNG')
                 img_bytes.seek(0)
@@ -523,6 +538,8 @@ def export_to_printed_form(doc_no):
                 xl_img.width = 280
                 xl_img.height = 95
                 ws.add_image(xl_img, "R12")
+            except Exception as img_err:
+                print(f"⚠️ เกิดข้อผิดพลาดในการโหลดรูปภาพลง Excel: {img_err}")
 
         # เครื่องหมายถูก Checkbox
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
