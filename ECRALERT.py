@@ -481,54 +481,48 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
 
-       # -------------------------------------------------------------
-# 📌 1. จัดการดึงและเขียนค่า SUBJECT ลง D12
-# -------------------------------------------------------------
-subj_val = ""
+        # 📌 1. ดึงค่า SUBJECT จากทุก Key ที่มีคำว่า SUBJECT ในชื่อคอลัมน์
+        subj_val = ""
+        for k, v in doc_data.items():
+            if "SUBJECT" in str(k).upper():
+                if v and str(v).strip():
+                    subj_val = str(v).strip()
+                    break
 
-# วนลูปหาจากทุก Key ใน doc_data ที่น่าจะเป็นไปได้
-for k, v in doc_data.items():
-    clean_k = str(k).upper().replace("_", "").replace(" ", "")
-    if any(x in clean_k for x in ["SUBJECT", "DETAILS", "DETAIL"]):
-        if v and str(v).strip() and str(v).strip().lower() != "none":
-            subj_val = str(v).strip()
-            break
+        # 📌 2. ปลดผสานเซลล์พื้นที่ D12:Q15 ชั่วคราว -> เขียนค่าลง D12 -> รวมเซลล์กลับ
+        merged_to_reopen = None
+        for rng in list(ws.merged_cells.ranges):
+            if "D12" in rng:
+                merged_to_reopen = str(rng)
+                ws.unmerge_cells(str(rng))
+                break
 
-# เขียนลง D12 (Top-Left Cell ของ Merged Range D12:Q15)
-ws["D12"].value = subj_val
-ws["D12"].alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
+        ws["D12"].value = str(subj_val)
 
+        if merged_to_reopen:
+            ws.merge_cells(merged_to_reopen)
+        else:
+            ws.merge_cells("D12:Q15")
 
-# -------------------------------------------------------------
-# 📌 2. จัดการแปลงและใส่อยู่ในพื้นที่ R12:AA15 (IMAGE)
-# -------------------------------------------------------------
-img_raw = doc_data.get("IMAGE_BASE64") or doc_data.get("IMAGE") or doc_data.get("IMAGE_DATA") or ""
+        ws["D12"].alignment = openpyxl.styles.Alignment(
+            wrap_text=True, 
+            vertical="top", 
+            horizontal="left"
+        )
 
-if img_raw and str(img_raw).strip():
-    try:
-        img_str = str(img_raw).strip()
-        # ตัด Prefix ออกหากมีติดมากับ Base64 (เช่น data:image/png;base64,...)
-        if "," in img_str:
-            img_str = img_str.split(",")[1]
-
-        # แปลง Base64 กลับเป็น Image Bytes
-        img_data = base64.b64decode(img_str)
-        pil_img = PILImage.open(io.BytesIO(img_data))
-
-        # บันทึกลง BytesIO แบบ PNG
-        img_bytes = io.BytesIO()
-        pil_img.save(img_bytes, format='PNG')
-        img_bytes.seek(0)
-
-        # สร้าง Openpyxl Image Object และปรับขนาดให้พอดีกับช่อง R12:AA15
-        xl_img = OpenpyxlImage(img_bytes)
-        xl_img.width = 280   # ความกว้างพิกเซล
-        xl_img.height = 85   # ความสูงพิกเซล
-
-        # วางลงที่ตำแหน่งเซลล์ R12
-        ws.add_image(xl_img, "R12")
-    except Exception as img_err:
-        print(f"⚠️ เกิดข้อผิดพลาดในการโหลดรูปภาพลง Excel: {img_err}")
+        # 📌 3. ATTACHED IMAGE (พื้นที่ R12:AA15)
+        img_base64 = doc_data.get("IMAGE_BASE64", "") or doc_data.get("IMAGE", "")
+        if img_base64:
+            pil_img = base64_to_image(img_base64)
+            if pil_img:
+                img_bytes = io.BytesIO()
+                pil_img.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                
+                xl_img = OpenpyxlImage(img_bytes)
+                xl_img.width = 280
+                xl_img.height = 95
+                ws.add_image(xl_img, "R12")
 
         # เครื่องหมายถูก Checkbox
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
