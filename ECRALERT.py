@@ -492,7 +492,6 @@ def export_to_printed_form(doc_no):
                 img_bytes.seek(0)
                 
                 xl_img = OpenpyxlImage(img_bytes)
-                # ปรับขนาดรูปให้กว้าง/สูงเหมาะสมพอดีกับกรอบ R12:AA14
                 xl_img.width = 300
                 xl_img.height = 100
                 ws.add_image(xl_img, "R12")
@@ -737,6 +736,17 @@ else:
                     st.error("❌ ไม่พบข้อมูลเอกสารในระบบ")
 
         st.markdown("---")
+        
+        # 📌 เพิ่มปุ่มดาวน์โหลดเอกสารไว้ด้านบนสุดของแบบฟอร์มหากมีข้อมูลเอกสารแล้ว
+        current_doc_id = doc_data.get("DOCUMENT_NO", doc_no)
+        if current_doc_id:
+            col_dl1, col_dl2 = st.columns([2, 1])
+            with col_dl1:
+                st.markdown(f"#### 📄 จัดการเอกสารเลขที่: **{current_doc_id}**")
+            with col_dl2:
+                render_download_excel_button(current_doc_id, "📥 ดาวน์โหลด Excel ใบงานนี้")
+            st.markdown("---")
+
         st.subheader("📄 ข้อมูลทั่วไปของเอกสาร (General Information)")
 
         c1, c2, c3 = st.columns(3)
@@ -895,32 +905,37 @@ else:
 
         st.markdown("---")
         
-        # ปุ่มบันทึกข้อมูลหลัก
-        if st.button("💾 บันทึกข้อมูลลงฐานข้อมูล (Save Data)", type="primary", use_container_width=True):
-            if not doc_no_val:
-                st.error("❌ กรุณาระบุ DOCUMENT NO.")
-            else:
-                save_data = {
-                    "DOCUMENT_NO": doc_no_val,
-                    "CUSTOMER_NAME": customer_name,
-                    "PART_NAME": part_name,
-                    "PART_NO": part_no,
-                    "MODEL": model,
-                    "MASTER_DWG_NO": master_dwg_no,
-                    "DATE": str(issue_date),
-                    "REF_DOC_NO": ref_doc_no,
-                    "ISSUE_BY": issue_by,
-                    "SUBJECT_TEXT": subject_text,
-                    "IMAGE_BASE64": image_base64_str
-                }
-                save_data.update(checklist_results)
+        # ปุ่มบันทึกข้อมูลหลัก และ ปุ่มดาวน์โหลดเอกสารท้ายฟอร์ม
+        col_b1, col_b2 = st.columns([2, 1])
+        with col_b1:
+            if st.button("💾 บันทึกข้อมูลลงฐานข้อมูล (Save Data)", type="primary", use_container_width=True):
+                if not doc_no_val:
+                    st.error("❌ กรุณาระบุ DOCUMENT NO.")
+                else:
+                    save_data = {
+                        "DOCUMENT_NO": doc_no_val,
+                        "CUSTOMER_NAME": customer_name,
+                        "PART_NAME": part_name,
+                        "PART_NO": part_no,
+                        "MODEL": model,
+                        "MASTER_DWG_NO": master_dwg_no,
+                        "DATE": str(issue_date),
+                        "REF_DOC_NO": ref_doc_no,
+                        "ISSUE_BY": issue_by,
+                        "SUBJECT_TEXT": subject_text,
+                        "IMAGE_BASE64": image_base64_str
+                    }
+                    save_data.update(checklist_results)
 
-                if save_to_excel(save_data):
-                    st.success(f"✅ บันทึกข้อมูลเอกสาร {doc_no_val} เรียบร้อยแล้ว!")
-                    
-                    # ตรวจสอบการส่ง Email แจ้งเตือนเมื่อวิศวกรปิดข้อ YES ครบ
-                    check_data = get_document_data(doc_no_val)
-                    completed, _ = check_yes_items_completed(check_data)
-                    if completed and not check_data.get("APPR_PDD_MGR"):
-                        send_all_completed_alert_email(doc_no_val, customer_name, part_name)
-                        st.info("📧 ส่งอีเมลแจ้งเตือนไปยัง PDD Manager เรียบร้อยแล้ว")
+                    if save_to_excel(save_data):
+                        st.success(f"✅ บันทึกข้อมูลเอกสาร {doc_no_val} เรียบร้อยแล้ว!")
+                        
+                        # ตรวจสอบการส่ง Email แจ้งเตือนเมื่อวิศวกรปิดข้อ YES ครบ
+                        check_data = get_document_data(doc_no_val)
+                        completed, _ = check_yes_items_completed(check_data)
+                        if completed and not check_data.get("APPR_PDD_MGR"):
+                            send_all_completed_alert_email(doc_no_val, customer_name, part_name)
+                            st.info("📧 ส่งอีเมลแจ้งเตือนไปยัง PDD Manager เรียบร้อยแล้ว")
+        with col_b2:
+            if doc_no_val:
+                render_download_excel_button(doc_no_val, "📥 ดาวน์โหลด Excel ฟอร์มจริง")
