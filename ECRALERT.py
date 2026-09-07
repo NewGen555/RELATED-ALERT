@@ -317,24 +317,37 @@ def get_doc_value(doc_data, num, field_type):
 def get_document_data(doc_no):
     try:
         ws = get_worksheet()
-        records = ws.get_all_records()
-        df = pd.DataFrame(records)
-        
-        if not df.empty:
-            df.columns = [str(c).strip().upper() for c in df.columns]
-            target_col = None
-            for col in ['DOCUMENT_NO', 'DOCUMENT NO', 'DOC_NO']:
-                if col in df.columns:
-                    target_col = col
-                    break
+        # 📌 เปลี่ยนมาใช้ get_all_values() เพื่อบังคับดึงทุกคอลัมน์จนถึงขอบขวาสุด (รองรับถึงคอลัมน์ Z)
+        all_rows = ws.get_all_values()
+        if not all_rows or len(all_rows) < 2:
+            return None
             
-            if target_col:
-                df[target_col] = df[target_col].astype(str).str.strip().str.upper()
-                search_key = str(doc_no).strip().upper()
-                matched = df[df[target_col] == search_key]
-                if not matched.empty:
-                    row_data = matched.iloc[0].to_dict()
-                    return {str(k): ("" if pd.isna(v) else str(v).strip()) for k, v in row_data.items()}
+        # แถวแรกคือ Header, แถวถัดไปคือ Data
+        headers = [str(c).strip().upper() for c in all_rows[0]]
+        
+        # หาตำแหน่งคอลัมน์ Document No
+        doc_no_idx = -1
+        for idx, h in enumerate(headers):
+            if h in ['DOCUMENT_NO', 'DOCUMENT NO', 'DOC_NO']:
+                doc_no_idx = idx
+                break
+                
+        if doc_no_idx == -1:
+            doc_no_idx = 0 # ถ้าหาไม่เจอ ให้ใช้คอลัมน์แรกสุด
+            
+        search_key = str(doc_no).strip().upper()
+        
+        # วนลูปหาแถวที่ตรงกับ Document No
+        for row in all_rows[1:]:
+            # ป้องกันกรณี row สั้นกว่า headers
+            padded_row = row + [""] * (len(headers) - len(row))
+            current_doc_no = str(padded_row[doc_no_idx]).strip().upper()
+            
+            if current_doc_no == search_key:
+                # แปลงร่างเป็น Dictionary จับคู่ Header กับ Value ทีละช่อง
+                row_data = {headers[i]: padded_row[i].strip() for i in range(len(headers)) if i < len(headers) and headers[i] != ""}
+                return row_data
+                
     except Exception as e:
         st.error(f"เกิดข้อผิดพลาดในการอ่านข้อมูลจาก Google Sheets: {e}")
     return None
@@ -354,21 +367,30 @@ def get_all_documents():
 def save_to_excel(data_dict):
     try:
         ws = get_worksheet()
-        headers = [str(h).strip().upper() for h in ws.row_values(1)]
-        if not headers:
-            st.error("❌ Google Sheet ยังไม่มี Header ในบรรทัดแรก")
+        all_rows = ws.get_all_values()
+        if not all_rows:
+            st.error("❌ Google Sheet ยังว่างเปล่า")
             return False
-
-        records = ws.get_all_records()
-        df_old = pd.DataFrame(records)
+            
+        headers = [str(h).strip().upper() for h in all_rows[0]]
         doc_no = str(data_dict.get('DOCUMENT_NO', '')).strip().upper()
 
-        target_col = 'DOCUMENT_NO' if 'DOCUMENT_NO' in headers else headers[0]
+        target_col_idx = 0
+        for idx, h in enumerate(headers):
+            if h in ['DOCUMENT_NO', 'DOCUMENT NO', 'DOC_NO']:
+                target_col_idx = idx
+                break
 
-        if not df_old.empty and target_col in df_old.columns and doc_no in df_old[target_col].astype(str).str.strip().str.upper().values:
-            df_old[target_col] = df_old[target_col].astype(str).str.strip().str.upper()
-            row_index = df_old[df_old[target_col] == doc_no].index[0] + 2
-            cell_updates = []
+        # ค้นหาว่ามี Document No นี้อยู่แล้วหรือยัง
+        row_index = -1
+        for r_idx, row in enumerate(all_rows[1:], start=2):
+            if len(row) > target_col_idx and str(row[target_col_idx]).strip().upper() == doc_no:
+                row_index = r_idx
+                break
+
+        cell_updates = []
+        if row_index != -1:
+            # อัปเดตข้อมูลแถวเดิม
             for key, value in data_dict.items():
                 clean_key = str(key).strip().upper()
                 if clean_key in headers and value is not None and value != "":
@@ -377,6 +399,7 @@ def save_to_excel(data_dict):
             if cell_updates:
                 ws.update_cells(cell_updates)
         else:
+            # เพิ่มแถวใหม่
             new_row = [str(data_dict.get(col, data_dict.get(col.upper(), ""))) for col in headers]
             ws.append_row(new_row)
         return True
