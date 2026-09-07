@@ -479,8 +479,11 @@ def export_to_printed_form(doc_no):
         write_cell("W8", doc_data.get("EFF_PLAN", ""))
         write_cell("W9", doc_data.get("EFF_ACTUAL", ""))
         
-        # 📌 1. SUBJECT TEXT: กำหนดพื้นที่ D12 ถึง Q14 (บันทึกลง D12)
-        write_cell("D12", doc_data.get("SUBJECT_TEXT", ""))
+        # 📌 1. FIX SUBJECT TEXT: ดึงค่าจากทั้ง SUBJECT_TEXT และ SUBJECT พร้อมตั้งค่า Wrap Text
+        subj_val = doc_data.get("SUBJECT_TEXT") or doc_data.get("SUBJECT") or ""
+        target_subj_cell = ws["D12"]
+        write_cell("D12", subj_val)
+        target_subj_cell.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top", horizontal="left")
         
         # 📌 2. IMAGE INSERTION: วางรูปภาพในพื้นที่ R12 ถึง AA14
         img_base64 = doc_data.get("IMAGE_BASE64", "")
@@ -496,7 +499,7 @@ def export_to_printed_form(doc_no):
                 xl_img.height = 100
                 ws.add_image(xl_img, "R12")
         
-        # เปลี่ยน X เป็น ✓ เฉพาะรายการที่มีการเลือกไว้
+        # เครื่องหมายถูก
         write_cell("I12", "✓" if doc_data.get("ATTACH_DRAWING") == "YES" else "")
         write_cell("I13", "✓" if doc_data.get("ATTACH_ECI") == "YES" else "")
         write_cell("I14", "✓" if doc_data.get("ATTACH_MEETING") == "YES" else "")
