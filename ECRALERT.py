@@ -118,11 +118,34 @@ def get_gspread_client():
         
     return gspread.authorize(credentials)
 
+def ensure_sheet_capacity(ws, min_cols=130, min_rows=1000):
+    """ขยาย Grid ของ Google Sheet ก่อนอ่าน/เขียนข้อมูล
+
+    ไฟล์เดิมมี Grid = 1000 rows x 108 columns (DL) แต่ workflow ใหม่
+    ต้องเพิ่ม Notification + Department Status รวม 18 columns จึงต้อง
+    ขยาย Grid ก่อน ไม่เช่นนั้น Google Sheets API อาจตอบ 400 Range exceeds grid limits.
+    """
+    try:
+        current_rows = int(getattr(ws, "row_count", 0) or 0)
+        current_cols = int(getattr(ws, "col_count", 0) or 0)
+        target_rows = max(current_rows, min_rows)
+        target_cols = max(current_cols, min_cols)
+        if target_rows != current_rows or target_cols != current_cols:
+            ws.resize(rows=target_rows, cols=target_cols)
+            print(f"🛠️ GOOGLE SHEET GRID RESIZED: rows={target_rows}, cols={target_cols}")
+        return True
+    except Exception as e:
+        print(f"⚠️ ensure_sheet_capacity ERROR: {type(e).__name__}: {e}")
+        return False
+
 def get_worksheet():
     gc = get_gspread_client()
     spreadsheet_name = st.secrets.get("sheets", {}).get("spreadsheet_name", "change_control_db")
     sh = gc.open(spreadsheet_name)
-    return sh.sheet1
+    ws = sh.sheet1
+    # สำคัญ: Sheet เดิมมีเพียง 108 columns แต่ workflow ใหม่ต้องใช้ถึงอย่างน้อย 126
+    ensure_sheet_capacity(ws, min_cols=130, min_rows=1000)
+    return ws
 
 # =============================================================
 # CONFIGURATION: SMTP EMAIL SETTINGS & DEPARTMENT EMAILS
@@ -194,9 +217,28 @@ def ensure_dept_workflow_columns(ws):
     return headers
 
 def get_dept_status(doc_data, dept_code):
-    if not doc_data:
+    """อ่านสถานะ workflow ของแผนกให้รองรับทั้ง dict และ pandas.Series
+    โดยห้ามใช้ `if not doc_data` เพราะ pandas.Series จะทำให้เกิด
+    ValueError: The truth value of a Series is ambiguous.
+    """
+    if doc_data is None:
         return "NOT_STARTED"
-    return str(doc_data.get(f"{dept_code}_STATUS", "") or "NOT_STARTED").strip().upper() or "NOT_STARTED"
+
+    if isinstance(doc_data, pd.Series):
+        value = doc_data.get(f"{dept_code}_STATUS", "")
+    elif isinstance(doc_data, dict):
+        if not doc_data:
+            return "NOT_STARTED"
+        value = doc_data.get(f"{dept_code}_STATUS", "")
+    else:
+        try:
+            value = doc_data.get(f"{dept_code}_STATUS", "")
+        except Exception:
+            return "NOT_STARTED"
+
+    if pd.isna(value):
+        return "NOT_STARTED"
+    return str(value or "NOT_STARTED").strip().upper() or "NOT_STARTED"
 
 def get_dept_status_label(status):
     return {
