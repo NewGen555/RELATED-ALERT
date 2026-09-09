@@ -166,6 +166,84 @@ WORKFLOW_NOTIFY_COLUMNS = [
     "PDD_NOTIFY_PRD_AT",
 ]
 
+# =============================================================
+# 🟢 DEPARTMENT WORKFLOW STATUS
+# ห้ามใช้ค่า YES/NO อย่างเดียวตัดสินว่าแผนกทำงานเสร็จ
+# ต้องมีการกด "ยืนยันปิดงานแผนก" จริงก่อนจึงเป็น COMPLETED
+# =============================================================
+DEPT_WORKFLOW_COLUMNS = [
+    "PDD_STATUS", "PDD_SUBMITTED_BY", "PDD_SUBMITTED_AT",
+    "QC_STATUS", "QC_SUBMITTED_BY", "QC_SUBMITTED_AT",
+    "PCD_STATUS", "PCD_SUBMITTED_BY", "PCD_SUBMITTED_AT",
+    "PRD_STATUS", "PRD_SUBMITTED_BY", "PRD_SUBMITTED_AT",
+]
+
+def ensure_dept_workflow_columns(ws):
+    """เพิ่มคอลัมน์สถานะแผนกอัตโนมัติ ถ้ายังไม่มี"""
+    all_rows = ws.get_all_values()
+    if not all_rows:
+        return []
+    headers = [normalize_header(c) for c in all_rows[0]]
+    missing = [c for c in DEPT_WORKFLOW_COLUMNS if c not in headers]
+    if missing:
+        start_col = len(headers) + 1
+        cells = [gspread.Cell(row=1, col=start_col+i, value=name) for i, name in enumerate(missing)]
+        ws.update_cells(cells)
+        headers.extend(missing)
+        print("🟢 Added department workflow columns:", missing)
+    return headers
+
+def get_dept_status(doc_data, dept_code):
+    if not doc_data:
+        return "NOT_STARTED"
+    return str(doc_data.get(f"{dept_code}_STATUS", "") or "NOT_STARTED").strip().upper() or "NOT_STARTED"
+
+def get_dept_status_label(status):
+    return {
+        "NOT_STARTED": "⚪ ยังไม่เริ่ม",
+        "IN_PROGRESS": "🟡 กำลังดำเนินการ",
+        "COMPLETED": "🟢 COMPLETED",
+    }.get(status, "⚪ ยังไม่เริ่ม")
+
+def set_dept_workflow_status(doc_no, dept_code, status, user_name=""):
+    """เขียนสถานะของแผนก โดยไม่แตะข้อมูล checklist ของแผนกอื่น"""
+    try:
+        ws = get_worksheet()
+        all_rows = ws.get_all_values()
+        if not all_rows:
+            return False
+        headers = [normalize_header(c) for c in all_rows[0]]
+        ensure_dept_workflow_columns(ws)
+        all_rows = ws.get_all_values()
+        headers = [normalize_header(c) for c in all_rows[0]]
+        doc_idx = headers.index("DOCUMENT_NO") if "DOCUMENT_NO" in headers else 0
+        row_idx = -1
+        target = str(doc_no).strip().upper()
+        for r, row in enumerate(all_rows[1:], start=2):
+            if len(row) > doc_idx and str(row[doc_idx]).strip().upper() == target:
+                row_idx = r
+                break
+        if row_idx == -1:
+            return False
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        updates = [
+            gspread.Cell(row=row_idx, col=headers.index(f"{dept_code}_STATUS")+1, value=status),
+            gspread.Cell(row=row_idx, col=headers.index(f"{dept_code}_SUBMITTED_BY")+1, value=user_name if status == "COMPLETED" else ""),
+            gspread.Cell(row=row_idx, col=headers.index(f"{dept_code}_SUBMITTED_AT")+1, value=now if status == "COMPLETED" else ""),
+        ]
+        ws.update_cells(updates)
+        print(f"🟢 DEPT STATUS UPDATE {dept_code}: {status} / {user_name}")
+        return True
+    except Exception as e:
+        print(f"❌ set_dept_workflow_status ERROR: {type(e).__name__}: {e}")
+        return False
+
+def mark_dept_in_progress(doc_no, dept_code):
+    current = get_document_data(doc_no) or {}
+    if get_dept_status(current, dept_code) != "COMPLETED":
+        return set_dept_workflow_status(doc_no, dept_code, "IN_PROGRESS", "")
+    return True
+
 def ensure_workflow_notify_columns(ws):
     """เพิ่มคอลัมน์สำหรับบันทึกสถานะการกระจาย Email ถ้ายังไม่มี"""
     all_rows = ws.get_all_values()
@@ -494,7 +572,8 @@ def get_user_dept_code(dept_text=None):
         return "PRD"
     return ""
 
-def get_dept_completion(doc_data, dept_code):
+def get_dept_checklist_completion(doc_data, dept_code):
+    """ตรวจเฉพาะความครบของข้อมูล checklist โดยยังไม่สน workflow status"""
     item_numbers = DEPT_ITEM_RANGES.get(dept_code, [])
     missing = []
     for num in item_numbers:
@@ -514,6 +593,15 @@ def get_dept_completion(doc_data, dept_code):
             if not close or close == "-":
                 missing.append(f"ข้อ {num}: ยังไม่ได้ระบุ Actual Close ({title})")
     return len(missing) == 0, missing
+
+def get_dept_completion(doc_data, dept_code):
+    """COMPLETED ต้องมี checklist ครบ + มีการกดยืนยันจริง"""
+    checklist_ok, missing = get_dept_checklist_completion(doc_data, dept_code)
+    workflow_status = get_dept_status(doc_data, dept_code)
+    completed = checklist_ok and workflow_status == "COMPLETED"
+    if checklist_ok and workflow_status != "COMPLETED":
+        missing = [f"แผนก {dept_code} ยังไม่ได้กด 'ยืนยันปิดงานแผนก'"]
+    return completed, missing
 
 def get_all_dept_completion(doc_data):
     result = {}
@@ -574,6 +662,9 @@ def get_document_data(doc_no):
     """
     try:
         ws = get_worksheet()
+        # Ensure workflow columns exist before reading the row, so PDD sees the true state.
+        ensure_workflow_notify_columns(ws)
+        ensure_dept_workflow_columns(ws)
         all_rows = ws.get_all_values()
 
         if not all_rows or len(all_rows) < 2:
@@ -680,6 +771,10 @@ def save_to_excel(data_dict):
             st.error("❌ Google Sheet ยังว่างเปล่า")
             return False
 
+        # เพิ่มทั้ง Notification และ Department Workflow columns อัตโนมัติ
+        ensure_workflow_notify_columns(ws)
+        ensure_dept_workflow_columns(ws)
+        all_rows = ws.get_all_values()
         headers_raw = list(all_rows[0])
         headers = [normalize_header(h) for h in headers_raw]
 
@@ -1514,7 +1609,8 @@ else:
         for dept_code, label in DEPT_LABELS.items():
             item_numbers = DEPT_ITEM_RANGES[dept_code]
             dept_ok, dept_missing = get_dept_completion(doc_data, dept_code)
-            status_text = "✅ ครบ" if dept_ok else "⏳ ยังไม่ครบ"
+            dept_status = get_dept_status(doc_data, dept_code)
+            status_text = get_dept_status_label(dept_status)
             with st.expander(f"{label} — {status_text}", expanded=(dept_code == user_dept or is_manager)):
                 if dept_code == user_dept and not is_manager:
                     st.caption("✏️ แผนกของคุณ: แก้ไขข้อมูลได้เฉพาะข้อในส่วนนี้")
@@ -1550,13 +1646,51 @@ else:
                         c3.write(f"PLAN: **{curr_plan or '-'}**")
                         c4.write(f"CLOSE: **{curr_close or '-'}**")
 
-                if dept_ok:
-                    st.success("ส่วนงานนี้กรอกและปิดงานครบแล้ว")
+                if dept_status == "COMPLETED" and dept_ok:
+                    st.success(f"🟢 {dept_code} ยืนยันปิดงานแล้ว")
+                    submitted_by = doc_data.get(f"{dept_code}_SUBMITTED_BY", "")
+                    submitted_at = doc_data.get(f"{dept_code}_SUBMITTED_AT", "")
+                    if submitted_by or submitted_at:
+                        st.caption(f"ยืนยันโดย: {submitted_by or '-'} | เวลา: {submitted_at or '-'}")
+                elif dept_status == "IN_PROGRESS":
+                    st.warning(f"🟡 {dept_code} กำลังดำเนินการ — ยังไม่ยืนยันปิดงาน")
+                    for m in dept_missing[:8]:
+                        st.warning(m)
                 else:
+                    st.info(f"⚪ {dept_code} ยังไม่เริ่ม / ยังไม่มีการยืนยันจากแผนกนี้")
                     for m in dept_missing[:8]:
                         st.warning(m)
                     if len(dept_missing) > 8:
                         st.caption(f"และอีก {len(dept_missing)-8} รายการ...")
+
+                # ปุ่มยืนยันแยกจาก Save: นี่คือ trigger จริงของ COMPLETED
+                if dept_code == user_dept and not is_manager and dept_status != "COMPLETED":
+                    st.markdown("---")
+                    checklist_ready, checklist_missing = get_dept_checklist_completion(doc_data, dept_code)
+                    if checklist_ready:
+                        if st.button(f"✅ ยืนยันปิดงาน {dept_code} / ส่งต่อ", key=f"submit_dept_{dept_code}", use_container_width=True):
+                            if set_dept_workflow_status(current_doc_id, dept_code, "COMPLETED", st.session_state.user_name):
+                                # PDD เป็นจุด Dispatch Email ไปทุกแผนกพร้อมกัน
+                                if dept_code == "PDD":
+                                    fresh = get_document_data(current_doc_id) or {}
+                                    notify_state = get_notify_state(fresh)
+                                    if notify_state != "SENT":
+                                        notify_ok, notify_results, notify_info = dispatch_parallel_department_notifications(
+                                            current_doc_id,
+                                            fresh.get("CUSTOMER_NAME", customer_name),
+                                            fresh.get("PART_NAME", part_name),
+                                            fresh.get("SUBJECT_TEXT", subject_text),
+                                            st.session_state.user_name
+                                        )
+                                        if notify_ok:
+                                            st.success("📧 PDD COMPLETED — กระจาย Email ไป QC / PCD / PRD พร้อมกันแล้ว")
+                                        else:
+                                            failed = [d for d, ok in notify_results.items() if not ok]
+                                            st.warning(f"⚠️ PDD ปิดงานแล้ว แต่ Email ส่งไม่ครบ: {', '.join(failed) if failed else notify_info}")
+                                st.success(f"✅ {dept_code} ยืนยันปิดงานสำเร็จ")
+                                st.rerun()
+                    else:
+                        st.caption("🔒 ต้องกรอก checklist ของแผนกนี้ให้ครบก่อนจึงจะยืนยันปิดงานได้")
 
         st.subheader("🖊️ การลงนามอนุมัติเอกสาร (Manager Approval)")
 
@@ -1674,40 +1808,29 @@ else:
                     if save_to_excel(save_data):
                         st.success(f"✅ บันทึกข้อมูลเอกสาร {doc_no_val} เรียบร้อยแล้ว!")
                         
-                        # =========================================================
-                        # 📧 PDD DISPATCH: เมื่อ PDD กรอกข้อ 1-7 ครบแล้ว
-                        # ให้กระจาย Email ไป QC / PCD / PRD พร้อมกัน
-                        # ไม่ต้องรอแผนกใดแผนกหนึ่งทำเสร็จก่อน
-                        # =========================================================
-                        check_data = get_document_data(doc_no_val)
-                        pdd_ok, pdd_missing = get_dept_completion(check_data, "PDD")
-                        dispatch_status = get_notify_state(check_data)
-
-                        if pdd_can_edit_main and pdd_ok and dispatch_status != "SENT":
-                            notify_ok, notify_results, notify_info = dispatch_parallel_department_notifications(
-                                doc_no_val,
-                                customer_name,
-                                part_name,
-                                str(subject_text).strip(),
-                                st.session_state.user_name
-                            )
-                            if notify_ok:
-                                st.success("📧 PDD กรอกครบแล้ว — ระบบกระจาย Email ให้ QC / PCD / PRD พร้อมกันเรียบร้อย")
-                            else:
-                                failed = [d for d, ok in notify_results.items() if not ok]
-                                st.warning(f"⚠️ กระจาย Email แล้ว แต่ส่งไม่ครบ: {', '.join(failed) if failed else notify_info}")
-                        elif pdd_can_edit_main and not pdd_ok:
-                            st.info("ℹ️ บันทึกข้อมูลแล้ว แต่ยังไม่กระจาย Email เพราะ PDD ยังกรอกข้อ 1-7 ไม่ครบ")
-                        elif dispatch_status == "SENT":
-                            st.info("📧 งานนี้ถูกกระจาย Email ให้ทุกแผนกแล้ว")
+                        # บันทึกแล้วให้สถานะแผนกเป็น IN_PROGRESS เท่านั้น
+                        # การเป็น COMPLETED ต้องเกิดจากปุ่ม "ยืนยันปิดงาน" ด้านบน
+                        if pdd_can_edit_main:
+                            fresh_after_save = get_document_data(doc_no_val) or {}
+                            if get_dept_status(fresh_after_save, "PDD") != "COMPLETED":
+                                mark_dept_in_progress(doc_no_val, "PDD")
+                            st.info("ℹ️ บันทึกข้อมูล PDD แล้ว — เมื่อครบทุกข้อให้กด 'ยืนยันปิดงาน PDD / ส่งต่อ' เพื่อกระจาย Email")
+                        elif user_dept in DEPT_ITEM_RANGES:
+                            fresh_after_save = get_document_data(doc_no_val) or {}
+                            if get_dept_status(fresh_after_save, user_dept) != "COMPLETED":
+                                mark_dept_in_progress(doc_no_val, user_dept)
 
                         # ตรวจสอบ Approval แยกจาก Email Dispatch
-                        all_done, _, all_missing = get_all_dept_completion(check_data)
-                        if all_done and not check_data.get("APPR_PDD_MGR"):
+                        fresh_check = get_document_data(doc_no_val) or {}
+                        all_done, _, all_missing = get_all_dept_completion(fresh_check)
+                        if all_done and not fresh_check.get("APPR_PDD_MGR"):
                             send_all_completed_alert_email(doc_no_val, customer_name, part_name)
                             st.info("📧 ทุกแผนกปิดงานครบแล้ว — ส่งอีเมลแจ้ง PDD Manager เพื่อเริ่ม Approval Loop")
                         elif not all_done:
                             st.info(f"ℹ️ ยังไม่ส่งเข้า Manager Approval เพราะเหลือ {len(all_missing)} รายการ/ส่วนงาน")
+
+                        # โหลด Google Sheet ใหม่ทันที เพื่อให้สถานะล่าสุดขึ้นหน้า PDD
+                        st.rerun()
         with col_b2:
             if doc_no_val:
                 render_download_excel_button(doc_no_val, "📥 ดาวน์โหลด Excel ฟอร์มจริง")
