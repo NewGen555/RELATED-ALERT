@@ -240,22 +240,25 @@ def get_dept_status(doc_data, dept_code):
         value = ""
     status = str(value or "").strip().upper()
 
-    # ถ้ายังไม่มี explicit workflow status แต่มีข้อมูล checklist ของแผนกแล้ว
-    # ให้ถือว่าเริ่มดำเนินการ (IN_PROGRESS)
-    # โดย COMPLETED จะเกิดได้จากการกดปุ่มยืนยันปิดงานเท่านั้น
+    # ถ้ายังไม่มี explicit workflow status:
+    # - PDD: อนุญาตให้ infer เป็น IN_PROGRESS จากข้อมูลที่กรอกไว้
+    #   เพราะ PDD เป็นเจ้าของเอกสารหลักและสามารถกรอกข้อมูลก่อนกด Save/ปิดงานได้
+    # - QC/PCD/PRD: ห้าม infer จากข้อมูล checklist เพราะข้อมูลเดิมใน Sheet
+    #   อาจมีค่า YES/NO หรือ Plan Date อยู่ก่อนที่แผนกนั้นจะเริ่มทำงานจริง
+    #   ต้องให้แผนกนั้นกด Save ก่อน จึงจะเป็น IN_PROGRESS
     if status in ("", "NOT_STARTED"):
+        if dept_code != "PDD":
+            return "NOT_STARTED"
+
         item_numbers = DEPT_ITEM_RANGES.get(dept_code, [])
-        has_progress = False
         for num in item_numbers:
             rev = get_doc_value(doc_data, num, "REVISE").upper().strip()
             resp = get_doc_value(doc_data, num, "RESP").strip()
             plan = get_doc_value(doc_data, num, "PLAN").strip()
             close = get_doc_value(doc_data, num, "CLOSE").strip()
-            # มีการเลือก YES/NO หรือมีข้อมูลผู้รับผิดชอบ/Plan/Actual
             if rev in ("YES", "NO") or any(x and x != "-" for x in (resp, plan, close)):
-                has_progress = True
-                break
-        return "IN_PROGRESS" if has_progress else "NOT_STARTED"
+                return "IN_PROGRESS"
+        return "NOT_STARTED"
 
     if status == "COMPLETED":
         return "COMPLETED"
