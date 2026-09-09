@@ -8,7 +8,8 @@ import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 import pandas as pd
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image, Image as PILImage
 import gspread
 
@@ -150,6 +151,156 @@ DEPT_EMAILS = {
     ]
 }
 
+# =============================================================
+# 📧 PARALLEL DEPARTMENT NOTIFICATION
+# หลัง PDD กดบันทึก/ยืนยันครบข้อ 1-7 แล้ว
+# ระบบจะกระจาย Email ไป QC / PCD / PRD พร้อมกัน
+# โดยไม่รอให้แผนกใดทำงานเสร็จก่อนอีกแผนกหนึ่ง
+# =============================================================
+WORKFLOW_NOTIFY_COLUMNS = [
+    "PDD_DISPATCH_STATUS",
+    "PDD_DISPATCH_AT",
+    "PDD_DISPATCH_BY",
+    "PDD_NOTIFY_QC_AT",
+    "PDD_NOTIFY_PCD_AT",
+    "PDD_NOTIFY_PRD_AT",
+]
+
+def ensure_workflow_notify_columns(ws):
+    """เพิ่มคอลัมน์สำหรับบันทึกสถานะการกระจาย Email ถ้ายังไม่มี"""
+    all_rows = ws.get_all_values()
+    if not all_rows:
+        return []
+    headers = [normalize_header(c) for c in all_rows[0]]
+    missing = [c for c in WORKFLOW_NOTIFY_COLUMNS if c not in headers]
+    if missing:
+        start_col = len(headers) + 1
+        cells = []
+        for offset, name in enumerate(missing):
+            cells.append(gspread.Cell(row=1, col=start_col + offset, value=name))
+        ws.update_cells(cells)
+        headers.extend(missing)
+        print("📧 Added workflow notification columns:", missing)
+    return headers
+
+def get_notify_state(doc_data):
+    if not doc_data:
+        return ""
+    return str(doc_data.get("PDD_DISPATCH_STATUS", "")).strip().upper()
+
+def send_email_notification_background(to_email, subject, body_content):
+    """ส่ง Email สำหรับ worker thread โดยไม่เรียก Streamlit UI จาก thread"""
+    recipient_list = to_email if isinstance(to_email, list) else [to_email]
+    msg = MIMEMultipart()
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = ", ".join(recipient_list)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body_content, "plain", "utf-8"))
+    server = None
+    try:
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, recipient_list, msg.as_string())
+        return True, "ส่งสำเร็จ"
+    except Exception as e:
+        print(f"❌ BACKGROUND EMAIL ERROR: {type(e).__name__}: {e}")
+        return False, f"{type(e).__name__}: {e}"
+    finally:
+        try:
+            if server is not None:
+                server.quit()
+        except Exception:
+            pass
+
+def send_department_work_notification(dept_code, doc_no, customer, part_name, subject_text):
+    """ส่งงานให้แผนกปลายทาง 1 แผนก โดยเป็นอิสระต่อกัน"""
+    dept_names = {
+        "QC": "QC (Quality Control) — ข้อ 8-15",
+        "PCD": "PCD (Production Control) — ข้อ 16-17",
+        "PRD": "PRD (Production / PD) — ข้อ 18-19",
+    }
+    task_ranges = {"QC": "8-15", "PCD": "16-17", "PRD": "18-19"}
+    recipients = DEPT_EMAILS.get(dept_code, [])
+    if not recipients:
+        return dept_code, False, "ไม่มี Email ปลายทาง"
+
+    subject = f"📩 [NEW CHANGE CONTROL] {doc_no} — งานเข้าคิว {dept_code}"
+    body = (
+        f"เรียน ทีม {dept_names.get(dept_code, dept_code)},\n\n"
+        f"PDD ได้กรอกข้อมูลหลักของ Change Control และส่งงานต่อให้ทุกแผนกแล้ว\n\n"
+        f"DOCUMENT NO.: {doc_no}\n"
+        f"CUSTOMER: {customer}\n"
+        f"PART NAME: {part_name}\n"
+        f"TOPIC / SUBJECT: {subject_text}\n\n"
+        f"งานของท่าน: ตรวจสอบและดำเนินการ Checklist ข้อ {task_ranges.get(dept_code, '-') }\n"
+        f"สถานะปัจจุบัน: ยังไม่เริ่มดำเนินการ\n\n"
+        f"🔗 เข้าสู่ระบบ: {APP_URL}\n\n"
+        f"หมายเหตุ: ระบบส่งแจ้งเตือนให้ QC / PCD / PRD พร้อมกัน จึงไม่ต้องรอแผนกอื่นดำเนินการเสร็จก่อน\n\n"
+        f"ขอแสดงความนับถือ,\nระบบ KFT Change Control Automated System"
+    )
+    ok, message = send_email_notification_background(recipients, subject, body)
+    return dept_code, ok, message
+
+def dispatch_parallel_department_notifications(doc_no, customer, part_name, subject_text, updated_by):
+    """Fan-out แจ้ง QC/PCD/PRD พร้อมกันหลัง PDD พร้อมส่งงาน"""
+    try:
+        ws = get_worksheet()
+        headers = ensure_workflow_notify_columns(ws)
+        all_rows = ws.get_all_values()
+        if not all_rows or not headers:
+            return False, {d: False for d in ("QC", "PCD", "PRD")}, "ไม่พบ Header ใน Google Sheet"
+
+        # หา row ของ DOCUMENT_NO
+        doc_idx = next((i for i, h in enumerate(headers) if h in ("DOCUMENT_NO", "DOCUMENTNO", "DOC_NO", "DOCNO")), 0)
+        row_number = None
+        for r, row in enumerate(all_rows[1:], start=2):
+            if doc_idx < len(row) and str(row[doc_idx]).strip().upper() == str(doc_no).strip().upper():
+                row_number = r
+                break
+        if row_number is None:
+            return False, {d: False for d in ("QC", "PCD", "PRD")}, "ไม่พบ DOCUMENT_NO"
+
+        # ถ้าส่งครบแล้ว ไม่ส่งซ้ำ
+        current_status = ""
+        status_idx = headers.index("PDD_DISPATCH_STATUS") if "PDD_DISPATCH_STATUS" in headers else -1
+        if status_idx >= 0 and status_idx < len(all_rows[row_number-1]):
+            current_status = str(all_rows[row_number-1][status_idx]).strip().upper()
+        if current_status == "SENT":
+            print(f"📧 NOTIFY SKIP: {doc_no} already SENT")
+            return True, {d: True for d in ("QC", "PCD", "PRD")}, "ส่งแจ้งเตือนไปแล้ว"
+
+        results = {}
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(send_department_work_notification, dept, doc_no, customer, part_name, subject_text): dept
+                for dept in ("QC", "PCD", "PRD")
+            }
+            for future in as_completed(futures):
+                dept, ok, message = future.result()
+                results[dept] = ok
+                print(f"📧 PARALLEL NOTIFY {dept}: {ok} - {message}")
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cell_updates = []
+        def add_update(header_name, value):
+            if header_name in headers:
+                cell_updates.append(gspread.Cell(row=row_number, col=headers.index(header_name)+1, value=value))
+
+        add_update("PDD_DISPATCH_AT", now)
+        add_update("PDD_DISPATCH_BY", updated_by)
+        add_update("PDD_DISPATCH_STATUS", "SENT" if all(results.get(d, False) for d in ("QC", "PCD", "PRD")) else "PARTIAL")
+        for dept, header_name in (("QC", "PDD_NOTIFY_QC_AT"), ("PCD", "PDD_NOTIFY_PCD_AT"), ("PRD", "PDD_NOTIFY_PRD_AT")):
+            if results.get(dept, False):
+                add_update(header_name, now)
+        if cell_updates:
+            ws.update_cells(cell_updates)
+
+        return all(results.get(d, False) for d in ("QC", "PCD", "PRD")), results, now
+    except Exception as e:
+        print(f"❌ dispatch_parallel_department_notifications ERROR: {type(e).__name__}: {e}")
+        return False, {d: False for d in ("QC", "PCD", "PRD")}, str(e)
+
 def send_email_notification(to_email, subject, body_content):
     recipient_list = to_email if isinstance(to_email, list) else [to_email]
     msg = MIMEMultipart()
@@ -247,7 +398,7 @@ USERS = {
     "qc_user": {"password": sec_passwords.get("qc_user", ""), "dept": "QC (Quality Control)", "name": "ENGINEER QC"},
     "pcd_user": {"password": sec_passwords.get("pcd_user", ""), "dept": "PCD (Production Control)", "name": "ENGINEER PCD"},
     "prd_user": {"password": sec_passwords.get("prd_user", ""), "dept": "PRD (Production / PD)", "name": "ENGINEER Production"},
-    "Manoch": {"password": sec_passwords.get("Manoch", ""), "dept": "MGR - PDD (ผู้จัดการ PDD)", "name": "ผู้จัดการ PDD"},
+    "mgr_pdd": {"password": sec_passwords.get("mgr_pdd", ""), "dept": "MGR - PDD (ผู้จัดการ PDD)", "name": "ผู้จัดการ PDD"},
     "mgr_qcd": {"password": sec_passwords.get("mgr_qcd", ""), "dept": "MGR - QCD (ผู้จัดการ QC)", "name": "ผู้จัดการ QC"},
     "mgr_pcd": {"password": sec_passwords.get("mgr_pcd", ""), "dept": "MGR - PCD (ผู้จัดการ PCD)", "name": "ผู้จัดการ PCD"},
     "mgr_prd": {"password": sec_passwords.get("mgr_prd", ""), "dept": "MGR - PD (ผู้จัดการ Production)", "name": "ผู้จัดการ PRD"},
@@ -1523,15 +1674,40 @@ else:
                     if save_to_excel(save_data):
                         st.success(f"✅ บันทึกข้อมูลเอกสาร {doc_no_val} เรียบร้อยแล้ว!")
                         
-                        # ตรวจสอบการส่ง Email แจ้งเตือนเมื่อวิศวกรปิดข้อ YES ครบ
+                        # =========================================================
+                        # 📧 PDD DISPATCH: เมื่อ PDD กรอกข้อ 1-7 ครบแล้ว
+                        # ให้กระจาย Email ไป QC / PCD / PRD พร้อมกัน
+                        # ไม่ต้องรอแผนกใดแผนกหนึ่งทำเสร็จก่อน
+                        # =========================================================
                         check_data = get_document_data(doc_no_val)
-                        completed, _ = check_yes_items_completed(check_data)
+                        pdd_ok, pdd_missing = get_dept_completion(check_data, "PDD")
+                        dispatch_status = get_notify_state(check_data)
+
+                        if pdd_can_edit_main and pdd_ok and dispatch_status != "SENT":
+                            notify_ok, notify_results, notify_info = dispatch_parallel_department_notifications(
+                                doc_no_val,
+                                customer_name,
+                                part_name,
+                                str(subject_text).strip(),
+                                st.session_state.user_name
+                            )
+                            if notify_ok:
+                                st.success("📧 PDD กรอกครบแล้ว — ระบบกระจาย Email ให้ QC / PCD / PRD พร้อมกันเรียบร้อย")
+                            else:
+                                failed = [d for d, ok in notify_results.items() if not ok]
+                                st.warning(f"⚠️ กระจาย Email แล้ว แต่ส่งไม่ครบ: {', '.join(failed) if failed else notify_info}")
+                        elif pdd_can_edit_main and not pdd_ok:
+                            st.info("ℹ️ บันทึกข้อมูลแล้ว แต่ยังไม่กระจาย Email เพราะ PDD ยังกรอกข้อ 1-7 ไม่ครบ")
+                        elif dispatch_status == "SENT":
+                            st.info("📧 งานนี้ถูกกระจาย Email ให้ทุกแผนกแล้ว")
+
+                        # ตรวจสอบ Approval แยกจาก Email Dispatch
                         all_done, _, all_missing = get_all_dept_completion(check_data)
                         if all_done and not check_data.get("APPR_PDD_MGR"):
                             send_all_completed_alert_email(doc_no_val, customer_name, part_name)
                             st.info("📧 ทุกแผนกปิดงานครบแล้ว — ส่งอีเมลแจ้ง PDD Manager เพื่อเริ่ม Approval Loop")
                         elif not all_done:
-                            st.info(f"ℹ️ บันทึกแล้ว แต่ยังไม่ส่งเข้า Manager Approval เพราะยังเหลือ {len(all_missing)} รายการ")
+                            st.info(f"ℹ️ ยังไม่ส่งเข้า Manager Approval เพราะเหลือ {len(all_missing)} รายการ/ส่วนงาน")
         with col_b2:
             if doc_no_val:
                 render_download_excel_button(doc_no_val, "📥 ดาวน์โหลด Excel ฟอร์มจริง")
